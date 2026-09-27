@@ -199,7 +199,6 @@ class MainActivity : AppCompatActivity() {
                 progress.visibility = View.GONE
 
                 updateRefreshButtonPositionFromPage()
-                openNotificationsInsideGoogleSitesIfRequested()
 
                 // Small delay prevents the raw Google Sites frame from
                 // flashing before the page is visually ready.
@@ -207,9 +206,11 @@ class MainActivity : AppCompatActivity() {
                     pageShown = true
                     splash.postDelayed({
                         hideSplash()
+                        openNotificationsIfRequested()
                     }, 450)
                 } else {
                     hideSplash()
+                    openNotificationsIfRequested()
                 }
             }
         }
@@ -283,11 +284,22 @@ class MainActivity : AppCompatActivity() {
 
         if (intent.getBooleanExtra("OPEN_NOTIFICATIONS", false)) {
             openNotificationsAfterLoad = true
-            showSplash()
-            webView.loadUrl(BuildConfig.APP_URL)
+
+            if (::webView.isInitialized) {
+                webView.postDelayed({
+                    openNotificationsIfRequested()
+                }, 450)
+            }
         }
     }
 
+    /**
+     * Google Sites hosts the Mashwarak web app inside its page, so Android
+     * cannot directly call a JavaScript function inside the cross-origin frame.
+     * The notifications bell is fixed at the upper-left of the Mashwarak UI.
+     * A synthetic tap is dispatched to that visible control only when the app
+     * was opened from a push notification.
+     */
     private fun updateRefreshButtonPositionFromDevice() {
         val isRtl = resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
         positionRefreshButton(isRtl)
@@ -352,79 +364,29 @@ class MainActivity : AppCompatActivity() {
         refreshButton.requestLayout()
     }
 
-    private fun openNotificationsInsideGoogleSitesIfRequested() {
+    private fun openNotificationsIfRequested() {
         if (!openNotificationsAfterLoad || !::webView.isInitialized) return
 
-        val directUrl = BuildConfig.APP_DIRECT_URL.trim()
-        if (!directUrl.startsWith("https://")) {
-            openNotificationsAfterLoad = false
-            return
-        }
-
-        val targetUrl = directUrl +
-            (if (directUrl.contains("?")) "&" else "?") +
-            "open=notifications"
-
-        val escapedTarget = targetUrl
-            .replace("\", "\\")
-            .replace("'", "\'")
-
-        val js = """
-            (function() {
-              try {
-                var frames = Array.prototype.slice.call(document.getElementsByTagName('iframe'));
-                if (!frames.length) return 'no_iframe';
-
-                var chosen = null;
-
-                for (var i = 0; i < frames.length; i++) {
-                  var s = frames[i].getAttribute('src') || '';
-                  if (s.indexOf('script.google.com/macros/') !== -1) {
-                    chosen = frames[i];
-                    break;
-                  }
-                }
-
-                if (!chosen) {
-                  var largestArea = 0;
-                  for (var j = 0; j < frames.length; j++) {
-                    var r = frames[j].getBoundingClientRect();
-                    var area = Math.max(0, r.width) * Math.max(0, r.height);
-                    if (area > largestArea) {
-                      largestArea = area;
-                      chosen = frames[j];
-                    }
-                  }
-                }
-
-                if (!chosen) return 'not_found';
-
-                chosen.src = '$escapedTarget';
-                return 'ok';
-              } catch (e) {
-                return 'error';
-              }
-            })();
-        """.trimIndent()
+        openNotificationsAfterLoad = false
 
         webView.postDelayed({
-            webView.evaluateJavascript(js) { result ->
-                val value = result?.replace("\"", "")?.trim()?.lowercase()
-                if (value == "ok") {
-                    openNotificationsAfterLoad = false
-                } else {
-                    // Retry once after Google Sites has had more time to build its iframe.
-                    webView.postDelayed({
-                        webView.evaluateJavascript(js) { second ->
-                            val secondValue = second?.replace("\"", "")?.trim()?.lowercase()
-                            if (secondValue == "ok") {
-                                openNotificationsAfterLoad = false
-                            }
-                        }
-                    }, 1200)
-                }
-            }
-        }, 650)
+            val x = dp(52).toFloat()
+            val y = dp(52).toFloat()
+            val now = android.os.SystemClock.uptimeMillis()
+
+            val down = MotionEvent.obtain(
+                now, now, MotionEvent.ACTION_DOWN, x, y, 0
+            )
+            val up = MotionEvent.obtain(
+                now, now + 80, MotionEvent.ACTION_UP, x, y, 0
+            )
+
+            webView.dispatchTouchEvent(down)
+            webView.dispatchTouchEvent(up)
+
+            down.recycle()
+            up.recycle()
+        }, 700)
     }
 
     private fun buildSplash(): FrameLayout {
