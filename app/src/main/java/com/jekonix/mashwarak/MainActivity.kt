@@ -98,8 +98,8 @@ class MainActivity : AppCompatActivity() {
         )
 
         // Refresh / update-check button:
-        // fixed over the Google Sites info/exclamation control
-        // at the lower-left of the visible page.
+        // dynamically follows the Google Sites info/exclamation control.
+        // RTL page/device -> lower-right | LTR page/device -> lower-left.
         refreshButton = ImageButton(this).apply {
             setImageResource(android.R.drawable.ic_popup_sync)
             setBackgroundResource(R.drawable.refresh_button_bg)
@@ -119,12 +119,15 @@ class MainActivity : AppCompatActivity() {
             refreshButton,
             FrameLayout.LayoutParams(dp(50), dp(50)).apply {
                 gravity = Gravity.BOTTOM or Gravity.START
-                // Google Sites info/exclamation control is fixed at the
-                // lower-left of the page. Keep this button directly over it.
                 marginStart = dp(14)
                 bottomMargin = dp(12)
             }
         )
+
+        // Set an initial side immediately from the Android layout direction.
+        // After Google Sites finishes loading, the page direction is checked
+        // again and this button is moved if needed.
+        updateRefreshButtonPositionFromDevice()
 
         splash = buildSplash()
         root.addView(
@@ -194,6 +197,8 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 progress.visibility = View.GONE
+
+                updateRefreshButtonPositionFromPage()
 
                 // Small delay prevents the raw Google Sites frame from
                 // flashing before the page is visually ready.
@@ -295,6 +300,70 @@ class MainActivity : AppCompatActivity() {
      * A synthetic tap is dispatched to that visible control only when the app
      * was opened from a push notification.
      */
+    private fun updateRefreshButtonPositionFromDevice() {
+        val isRtl = resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
+        positionRefreshButton(isRtl)
+    }
+
+    private fun updateRefreshButtonPositionFromPage() {
+        if (!::webView.isInitialized) {
+            updateRefreshButtonPositionFromDevice()
+            return
+        }
+
+        val js = """
+            (function() {
+              try {
+                var d = (document.documentElement && document.documentElement.dir) || '';
+                var b = (document.body && document.body.dir) || '';
+                var c = '';
+                if (document.body && window.getComputedStyle) {
+                  c = window.getComputedStyle(document.body).direction || '';
+                }
+                var lang = (document.documentElement && document.documentElement.lang) || navigator.language || '';
+                var raw = (d || b || c || '').toLowerCase();
+                if (raw === 'rtl') return 'rtl';
+                if (raw === 'ltr') return 'ltr';
+                return /^(ar|he|fa|ur)(-|$)/i.test(lang) ? 'rtl' : 'ltr';
+              } catch (e) {
+                return '';
+              }
+            })();
+        """.trimIndent()
+
+        webView.evaluateJavascript(js) { result ->
+            val dir = result?.replace("\"", "")?.trim()?.lowercase()
+            when (dir) {
+                "rtl" -> positionRefreshButton(true)
+                "ltr" -> positionRefreshButton(false)
+                else -> updateRefreshButtonPositionFromDevice()
+            }
+        }
+    }
+
+    private fun positionRefreshButton(isRtl: Boolean) {
+        if (!::refreshButton.isInitialized) return
+
+        val lp = (refreshButton.layoutParams as? FrameLayout.LayoutParams)
+            ?: FrameLayout.LayoutParams(dp(50), dp(50))
+
+        lp.width = dp(50)
+        lp.height = dp(50)
+        lp.gravity = Gravity.BOTTOM or if (isRtl) Gravity.END else Gravity.START
+        lp.bottomMargin = dp(12)
+
+        if (isRtl) {
+            lp.marginEnd = dp(14)
+            lp.marginStart = 0
+        } else {
+            lp.marginStart = dp(14)
+            lp.marginEnd = 0
+        }
+
+        refreshButton.layoutParams = lp
+        refreshButton.requestLayout()
+    }
+
     private fun openNotificationsIfRequested() {
         if (!openNotificationsAfterLoad || !::webView.isInitialized) return
 

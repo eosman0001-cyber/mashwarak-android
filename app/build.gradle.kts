@@ -33,8 +33,8 @@ android {
         applicationId = "com.jekonix.mashwarak"
         minSdk = 24
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 7
+        versionName = "1.6"
 
         buildConfigField("String", "APP_URL", "\"${cfg("APP_URL")}\"")
         buildConfigField("String", "FCM_PROJECT_ID", "\"${cfg("FCM_PROJECT_ID")}\"")
