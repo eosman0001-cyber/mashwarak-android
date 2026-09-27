@@ -199,6 +199,7 @@ class MainActivity : AppCompatActivity() {
                 progress.visibility = View.GONE
 
                 updateRefreshButtonPositionFromPage()
+                openNotificationsInsideGoogleSitesIfRequested()
 
                 // Small delay prevents the raw Google Sites frame from
                 // flashing before the page is visually ready.
@@ -249,13 +250,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val launchUrl = if (openNotificationsAfterLoad) {
-            buildNotificationsUrl()
-        } else {
-            BuildConfig.APP_URL
-        }
-
-        if (!launchUrl.startsWith("https://")) {
+        if (!BuildConfig.APP_URL.startsWith("https://")) {
             Toast.makeText(
                 this,
                 "رابط مشوارك غير مضبوط",
@@ -263,7 +258,7 @@ class MainActivity : AppCompatActivity() {
             ).show()
         } else {
             showSplash()
-            webView.loadUrl(launchUrl)
+            webView.loadUrl(BuildConfig.APP_URL)
         }
 
         setupNotifications()
@@ -289,7 +284,7 @@ class MainActivity : AppCompatActivity() {
         if (intent.getBooleanExtra("OPEN_NOTIFICATIONS", false)) {
             openNotificationsAfterLoad = true
             showSplash()
-            webView.loadUrl(buildNotificationsUrl())
+            webView.loadUrl(BuildConfig.APP_URL)
         }
     }
 
@@ -357,12 +352,79 @@ class MainActivity : AppCompatActivity() {
         refreshButton.requestLayout()
     }
 
-    private fun buildNotificationsUrl(): String {
-        val base = BuildConfig.APP_DIRECT_URL.trim()
-        if (!base.startsWith("https://")) return BuildConfig.APP_URL
+    private fun openNotificationsInsideGoogleSitesIfRequested() {
+        if (!openNotificationsAfterLoad || !::webView.isInitialized) return
 
-        val separator = if (base.contains("?")) "&" else "?"
-        return base + separator + "open=notifications"
+        val directUrl = BuildConfig.APP_DIRECT_URL.trim()
+        if (!directUrl.startsWith("https://")) {
+            openNotificationsAfterLoad = false
+            return
+        }
+
+        val targetUrl = directUrl +
+            (if (directUrl.contains("?")) "&" else "?") +
+            "open=notifications"
+
+        val escapedTarget = targetUrl
+            .replace("\", "\\")
+            .replace("'", "\'")
+
+        val js = """
+            (function() {
+              try {
+                var frames = Array.prototype.slice.call(document.getElementsByTagName('iframe'));
+                if (!frames.length) return 'no_iframe';
+
+                var chosen = null;
+
+                for (var i = 0; i < frames.length; i++) {
+                  var s = frames[i].getAttribute('src') || '';
+                  if (s.indexOf('script.google.com/macros/') !== -1) {
+                    chosen = frames[i];
+                    break;
+                  }
+                }
+
+                if (!chosen) {
+                  var largestArea = 0;
+                  for (var j = 0; j < frames.length; j++) {
+                    var r = frames[j].getBoundingClientRect();
+                    var area = Math.max(0, r.width) * Math.max(0, r.height);
+                    if (area > largestArea) {
+                      largestArea = area;
+                      chosen = frames[j];
+                    }
+                  }
+                }
+
+                if (!chosen) return 'not_found';
+
+                chosen.src = '$escapedTarget';
+                return 'ok';
+              } catch (e) {
+                return 'error';
+              }
+            })();
+        """.trimIndent()
+
+        webView.postDelayed({
+            webView.evaluateJavascript(js) { result ->
+                val value = result?.replace("\"", "")?.trim()?.lowercase()
+                if (value == "ok") {
+                    openNotificationsAfterLoad = false
+                } else {
+                    // Retry once after Google Sites has had more time to build its iframe.
+                    webView.postDelayed({
+                        webView.evaluateJavascript(js) { second ->
+                            val secondValue = second?.replace("\"", "")?.trim()?.lowercase()
+                            if (secondValue == "ok") {
+                                openNotificationsAfterLoad = false
+                            }
+                        }
+                    }, 1200)
+                }
+            }
+        }, 650)
     }
 
     private fun buildSplash(): FrameLayout {
