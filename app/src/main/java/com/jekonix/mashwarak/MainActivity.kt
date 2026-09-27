@@ -293,6 +293,70 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateRefreshButtonPositionFromDevice() {
+        val isRtl = resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
+        positionRefreshButton(isRtl)
+    }
+
+    private fun updateRefreshButtonPositionFromPage() {
+        if (!::webView.isInitialized) {
+            updateRefreshButtonPositionFromDevice()
+            return
+        }
+
+        val js = """
+            (function() {
+              try {
+                var d = (document.documentElement && document.documentElement.dir) || '';
+                var b = (document.body && document.body.dir) || '';
+                var c = '';
+                if (document.body && window.getComputedStyle) {
+                  c = window.getComputedStyle(document.body).direction || '';
+                }
+                var lang = (document.documentElement && document.documentElement.lang) || navigator.language || '';
+                var raw = (d || b || c || '').toLowerCase();
+                if (raw === 'rtl') return 'rtl';
+                if (raw === 'ltr') return 'ltr';
+                return /^(ar|he|fa|ur)(-|$)/i.test(lang) ? 'rtl' : 'ltr';
+              } catch (e) {
+                return '';
+              }
+            })();
+        """.trimIndent()
+
+        webView.evaluateJavascript(js) { result ->
+            val dir = result?.replace("\"", "")?.trim()?.lowercase()
+            when (dir) {
+                "rtl" -> positionRefreshButton(true)
+                "ltr" -> positionRefreshButton(false)
+                else -> updateRefreshButtonPositionFromDevice()
+            }
+        }
+    }
+
+    private fun positionRefreshButton(isRtl: Boolean) {
+        if (!::refreshButton.isInitialized) return
+
+        val lp = (refreshButton.layoutParams as? FrameLayout.LayoutParams)
+            ?: FrameLayout.LayoutParams(dp(50), dp(50))
+
+        lp.width = dp(50)
+        lp.height = dp(50)
+        lp.gravity = Gravity.BOTTOM or if (isRtl) Gravity.END else Gravity.START
+        lp.bottomMargin = dp(12)
+
+        if (isRtl) {
+            lp.marginEnd = dp(14)
+            lp.marginStart = 0
+        } else {
+            lp.marginStart = dp(14)
+            lp.marginEnd = 0
+        }
+
+        refreshButton.layoutParams = lp
+        refreshButton.requestLayout()
+    }
+
     private fun buildNotificationsUrl(): String {
         val base = BuildConfig.APP_DIRECT_URL.trim()
         if (!base.startsWith("https://")) return BuildConfig.APP_URL

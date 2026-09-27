@@ -33,8 +33,8 @@ android {
         applicationId = "com.jekonix.mashwarak"
         minSdk = 24
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.7"
+        versionCode = 9
+        versionName = "1.7.1"
 
         buildConfigField("String", "APP_URL", "\"${cfg("APP_URL")}\"")
         buildConfigField("String", "APP_DIRECT_URL", "\"${cfg("APP_DIRECT_URL")}\"")
