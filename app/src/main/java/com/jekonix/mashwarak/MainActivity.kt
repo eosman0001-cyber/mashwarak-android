@@ -3,6 +3,13 @@ package com.jekonix.mashwarak
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.ContentValues
+import android.media.MediaScannerConnection
+import android.os.Environment
+import android.provider.MediaStore
+import android.util.Base64
+import java.io.File
+import java.io.FileOutputStream
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -41,6 +48,8 @@ class MainActivity : AppCompatActivity() {
 
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private var requestedCameraFacing: String = "rear"
+    private var pendingDownloadName: String? = null
+    private var pendingDownloadDataUrl: String? = null
     private var pageShown = false
     private var openNotificationsAfterLoad = false
 
@@ -61,6 +70,25 @@ class MainActivity : AppCompatActivity() {
 
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    private val storagePermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            val name = pendingDownloadName
+            val data = pendingDownloadDataUrl
+
+            pendingDownloadName = null
+            pendingDownloadDataUrl = null
+
+            if (granted && !name.isNullOrBlank() && !data.isNullOrBlank()) {
+                saveBase64ImageToPictures(name, data)
+            } else if (!granted) {
+                Toast.makeText(
+                    this,
+                    "لم يتم السماح بحفظ الصورة",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -171,12 +199,17 @@ class MainActivity : AppCompatActivity() {
             allowContentAccess = true
             javaScriptCanOpenWindowsAutomatically = true
             mediaPlaybackRequiresUserGesture = false
-            userAgentString = "$userAgentString MashwarakAndroid/1.8"
+            userAgentString = "$userAgentString MashwarakAndroid/1.9"
         }
 
         webView.addJavascriptInterface(
             MashwarakCameraBridge(),
             "MashwarakCamera"
+        )
+
+        webView.addJavascriptInterface(
+            MashwarakDownloadBridge(),
+            "MashwarakDownload"
         )
 
         webView.webViewClient = object : WebViewClient() {
@@ -527,6 +560,144 @@ class MainActivity : AppCompatActivity() {
             requestedCameraFacing =
                 if (mode.equals("front", ignoreCase = true)) "front" else "rear"
         }
+    }
+
+    inner class MashwarakDownloadBridge {
+        @JavascriptInterface
+        fun saveBase64Image(fileName: String?, dataUrl: String?) {
+            val safeName = sanitizePngFileName(fileName)
+            val safeData = dataUrl.orEmpty()
+
+            if (safeData.isBlank() || !safeData.contains("base64,")) {
+                runOnUiThread {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "تعذر تجهيز الصورة للحفظ",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                return
+            }
+
+            runOnUiThread {
+                if (
+                    Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                    ContextCompat.checkSelfPermission(
+                        this@MainActivity,
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    pendingDownloadName = safeName
+                    pendingDownloadDataUrl = safeData
+                    storagePermission.launch(
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    )
+                } else {
+                    saveBase64ImageToPictures(safeName, safeData)
+                }
+            }
+        }
+    }
+
+    private fun sanitizePngFileName(fileName: String?): String {
+        var name = fileName
+            ?.trim()
+            ?.replace(Regex("""[\\/:*?"<>|]"""), "_")
+            ?.takeIf { it.isNotBlank() }
+            ?: "Mashwarak-${System.currentTimeMillis()}.png"
+
+        if (!name.lowercase().endsWith(".png")) {
+            name += ".png"
+        }
+
+        return name
+    }
+
+    private fun saveBase64ImageToPictures(
+        fileName: String,
+        dataUrl: String
+    ) {
+        Thread {
+            try {
+                val base64Part = dataUrl.substringAfter("base64,", "")
+                if (base64Part.isBlank()) {
+                    throw IllegalArgumentException("Missing base64 image data")
+                }
+
+                val bytes = Base64.decode(base64Part, Base64.DEFAULT)
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val values = ContentValues().apply {
+                        put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                        put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                        put(
+                            MediaStore.Images.Media.RELATIVE_PATH,
+                            Environment.DIRECTORY_PICTURES + "/Mashwarak"
+                        )
+                        put(MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+
+                    val uri = contentResolver.insert(
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        values
+                    ) ?: throw IllegalStateException("Cannot create image")
+
+                    try {
+                        contentResolver.openOutputStream(uri)?.use { output ->
+                            output.write(bytes)
+                            output.flush()
+                        } ?: throw IllegalStateException("Cannot open image output")
+
+                        values.clear()
+                        values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                        contentResolver.update(uri, values, null, null)
+                    } catch (e: Exception) {
+                        contentResolver.delete(uri, null, null)
+                        throw e
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    val picturesRoot =
+                        Environment.getExternalStoragePublicDirectory(
+                            Environment.DIRECTORY_PICTURES
+                        )
+
+                    val directory = File(picturesRoot, "Mashwarak")
+                    if (!directory.exists() && !directory.mkdirs()) {
+                        throw IllegalStateException("Cannot create Mashwarak folder")
+                    }
+
+                    val outputFile = File(directory, fileName)
+                    FileOutputStream(outputFile).use { output ->
+                        output.write(bytes)
+                        output.flush()
+                    }
+
+                    MediaScannerConnection.scanFile(
+                        this,
+                        arrayOf(outputFile.absolutePath),
+                        arrayOf("image/png"),
+                        null
+                    )
+                }
+
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        "تم حفظ الصورة في الصور > Mashwarak",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            } catch (_: Exception) {
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        "تعذر حفظ الصورة | حاول مرة أخرى",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }.start()
     }
 
     private fun setupNotifications() {
