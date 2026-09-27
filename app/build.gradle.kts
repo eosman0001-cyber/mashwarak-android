@@ -13,6 +13,18 @@ fun cfg(name: String, fallback: String = "") =
     (cfg.getProperty(name) ?: fallback).replace("\\", "\\\\").replace("\"", "\\\"")
 
 android {
+    signingConfigs {
+        create("release") {
+            val ksPath = System.getenv("MASHWARAK_KEYSTORE_PATH")
+            if (!ksPath.isNullOrBlank()) {
+                storeFile = file(ksPath)
+                storePassword = System.getenv("MASHWARAK_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("MASHWARAK_KEY_ALIAS")
+                keyPassword = System.getenv("MASHWARAK_KEY_PASSWORD")
+            }
+        }
+    }
+
     namespace = "com.jekonix.mashwarak"
     compileSdk = 35
 
@@ -20,8 +32,8 @@ android {
         applicationId = "com.jekonix.mashwarak"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 3
+        versionName = "1.2"
 
         buildConfigField("String", "APP_URL", "\"${cfg("APP_URL")}\"")
         buildConfigField("String", "FCM_PROJECT_ID", "\"${cfg("FCM_PROJECT_ID")}\"")
@@ -35,6 +47,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
