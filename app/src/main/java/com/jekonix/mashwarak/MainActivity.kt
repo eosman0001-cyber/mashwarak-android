@@ -93,8 +93,8 @@ class MainActivity : AppCompatActivity() {
         )
 
         // Refresh / update-check button:
-        // positioned inside the webpage content area, directly at the
-        // upper-right where Google Sites shows its info/exclamation control.
+        // fixed over the Google Sites info/exclamation control
+        // at the lower-left of the visible page.
         refreshButton = ImageButton(this).apply {
             setImageResource(android.R.drawable.ic_popup_sync)
             setBackgroundResource(R.drawable.refresh_button_bg)
@@ -112,11 +112,12 @@ class MainActivity : AppCompatActivity() {
 
         root.addView(
             refreshButton,
-            FrameLayout.LayoutParams(dp(46), dp(46)).apply {
-                gravity = Gravity.TOP or Gravity.END
-                // This is relative to the safe content area after insets.
-                topMargin = dp(7)
-                marginEnd = dp(7)
+            FrameLayout.LayoutParams(dp(50), dp(50)).apply {
+                gravity = Gravity.BOTTOM or Gravity.START
+                // Google Sites info/exclamation control is fixed at the
+                // lower-left of the page. Keep this button directly over it.
+                marginStart = dp(14)
+                bottomMargin = dp(12)
             }
         )
 
