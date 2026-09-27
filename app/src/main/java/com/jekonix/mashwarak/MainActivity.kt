@@ -206,11 +206,9 @@ class MainActivity : AppCompatActivity() {
                     pageShown = true
                     splash.postDelayed({
                         hideSplash()
-                        openNotificationsIfRequested()
                     }, 450)
                 } else {
                     hideSplash()
-                    openNotificationsIfRequested()
                 }
             }
         }
@@ -251,7 +249,13 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        if (!BuildConfig.APP_URL.startsWith("https://")) {
+        val launchUrl = if (openNotificationsAfterLoad) {
+            buildNotificationsUrl()
+        } else {
+            BuildConfig.APP_URL
+        }
+
+        if (!launchUrl.startsWith("https://")) {
             Toast.makeText(
                 this,
                 "رابط مشوارك غير مضبوط",
@@ -259,7 +263,7 @@ class MainActivity : AppCompatActivity() {
             ).show()
         } else {
             showSplash()
-            webView.loadUrl(BuildConfig.APP_URL)
+            webView.loadUrl(launchUrl)
         }
 
         setupNotifications()
@@ -284,109 +288,17 @@ class MainActivity : AppCompatActivity() {
 
         if (intent.getBooleanExtra("OPEN_NOTIFICATIONS", false)) {
             openNotificationsAfterLoad = true
-
-            if (::webView.isInitialized) {
-                webView.postDelayed({
-                    openNotificationsIfRequested()
-                }, 450)
-            }
+            showSplash()
+            webView.loadUrl(buildNotificationsUrl())
         }
     }
 
-    /**
-     * Google Sites hosts the Mashwarak web app inside its page, so Android
-     * cannot directly call a JavaScript function inside the cross-origin frame.
-     * The notifications bell is fixed at the upper-left of the Mashwarak UI.
-     * A synthetic tap is dispatched to that visible control only when the app
-     * was opened from a push notification.
-     */
-    private fun updateRefreshButtonPositionFromDevice() {
-        val isRtl = resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
-        positionRefreshButton(isRtl)
-    }
+    private fun buildNotificationsUrl(): String {
+        val base = BuildConfig.APP_DIRECT_URL.trim()
+        if (!base.startsWith("https://")) return BuildConfig.APP_URL
 
-    private fun updateRefreshButtonPositionFromPage() {
-        if (!::webView.isInitialized) {
-            updateRefreshButtonPositionFromDevice()
-            return
-        }
-
-        val js = """
-            (function() {
-              try {
-                var d = (document.documentElement && document.documentElement.dir) || '';
-                var b = (document.body && document.body.dir) || '';
-                var c = '';
-                if (document.body && window.getComputedStyle) {
-                  c = window.getComputedStyle(document.body).direction || '';
-                }
-                var lang = (document.documentElement && document.documentElement.lang) || navigator.language || '';
-                var raw = (d || b || c || '').toLowerCase();
-                if (raw === 'rtl') return 'rtl';
-                if (raw === 'ltr') return 'ltr';
-                return /^(ar|he|fa|ur)(-|$)/i.test(lang) ? 'rtl' : 'ltr';
-              } catch (e) {
-                return '';
-              }
-            })();
-        """.trimIndent()
-
-        webView.evaluateJavascript(js) { result ->
-            val dir = result?.replace("\"", "")?.trim()?.lowercase()
-            when (dir) {
-                "rtl" -> positionRefreshButton(true)
-                "ltr" -> positionRefreshButton(false)
-                else -> updateRefreshButtonPositionFromDevice()
-            }
-        }
-    }
-
-    private fun positionRefreshButton(isRtl: Boolean) {
-        if (!::refreshButton.isInitialized) return
-
-        val lp = (refreshButton.layoutParams as? FrameLayout.LayoutParams)
-            ?: FrameLayout.LayoutParams(dp(50), dp(50))
-
-        lp.width = dp(50)
-        lp.height = dp(50)
-        lp.gravity = Gravity.BOTTOM or if (isRtl) Gravity.END else Gravity.START
-        lp.bottomMargin = dp(12)
-
-        if (isRtl) {
-            lp.marginEnd = dp(14)
-            lp.marginStart = 0
-        } else {
-            lp.marginStart = dp(14)
-            lp.marginEnd = 0
-        }
-
-        refreshButton.layoutParams = lp
-        refreshButton.requestLayout()
-    }
-
-    private fun openNotificationsIfRequested() {
-        if (!openNotificationsAfterLoad || !::webView.isInitialized) return
-
-        openNotificationsAfterLoad = false
-
-        webView.postDelayed({
-            val x = dp(52).toFloat()
-            val y = dp(52).toFloat()
-            val now = android.os.SystemClock.uptimeMillis()
-
-            val down = MotionEvent.obtain(
-                now, now, MotionEvent.ACTION_DOWN, x, y, 0
-            )
-            val up = MotionEvent.obtain(
-                now, now + 80, MotionEvent.ACTION_UP, x, y, 0
-            )
-
-            webView.dispatchTouchEvent(down)
-            webView.dispatchTouchEvent(up)
-
-            down.recycle()
-            up.recycle()
-        }, 700)
+        val separator = if (base.contains("?")) "&" else "?"
+        return base + separator + "open=notifications"
     }
 
     private fun buildSplash(): FrameLayout {

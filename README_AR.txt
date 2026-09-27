@@ -97,3 +97,13 @@
 - بعد تحميل الصفحة يتم فحص اتجاه Google Sites نفسه.
 - في حالة عدم توفر اتجاه واضح يتم استخدام اتجاه لغة الجهاز.
 - Firebase والتوقيع الثابت والرابط المباشر محفوظون كما هم.
+
+
+تحديث V1.7 | فتح الإشعارات مباشرة
+----------------------------------
+- تم إلغاء الاعتماد على الضغط الصناعي على زر الجرس.
+- عند الضغط على Push Notification يفتح التطبيق رابط Apps Script المباشر:
+  https://script.google.com/macros/s/AKfycbxqgdgey4Q7B5h5N7u-Slf-ShEIRpjUswkufJq9k3-TlCow_U4M3gbmSbsrweLngRwOhA/exec?open=notifications
+- الواجهة تقرأ open=notifications وتفتح قسم الإشعارات تلقائيًا.
+- فتح التطبيق من الأيقونة يظل على Google Sites كالمعتاد.
+- Firebase والتوقيع الثابت والرابط المباشر محفوظون.
