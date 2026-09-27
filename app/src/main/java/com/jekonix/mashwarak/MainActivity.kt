@@ -131,7 +131,13 @@ class MainActivity : AppCompatActivity() {
                 fileCallback?.onReceiveValue(null)
                 fileCallback = filePathCallback
                 return try {
-                    filePicker.launch(fileChooserParams?.createIntent())
+                    val chooserIntent = fileChooserParams?.createIntent()
+                        ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                            type = "image/*"
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                        }
+
+                    filePicker.launch(chooserIntent)
                     true
                 } catch (e: Exception) {
                     fileCallback = null
