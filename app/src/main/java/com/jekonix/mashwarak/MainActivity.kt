@@ -40,6 +40,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var refreshButton: ImageButton
 
     private var fileCallback: ValueCallback<Array<Uri>>? = null
+    private var requestedCameraFacing: String = "rear"
     private var pageShown = false
     private var openNotificationsAfterLoad = false
 
@@ -47,8 +48,14 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         val cb = fileCallback ?: return@registerForActivityResult
-        val uris = WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
-        cb.onReceiveValue(uris)
+        val uri = result.data?.data
+
+        if (result.resultCode == RESULT_OK && uri != null) {
+            cb.onReceiveValue(arrayOf(uri))
+        } else {
+            cb.onReceiveValue(null)
+        }
+
         fileCallback = null
     }
 
@@ -164,8 +171,13 @@ class MainActivity : AppCompatActivity() {
             allowContentAccess = true
             javaScriptCanOpenWindowsAutomatically = true
             mediaPlaybackRequiresUserGesture = false
-            userAgentString = "$userAgentString MashwarakAndroid/1.1"
+            userAgentString = "$userAgentString MashwarakAndroid/1.8"
         }
+
+        webView.addJavascriptInterface(
+            MashwarakCameraBridge(),
+            "MashwarakCamera"
+        )
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(
@@ -231,21 +243,27 @@ class MainActivity : AppCompatActivity() {
                 fileCallback = filePathCallback
 
                 return try {
-                    val chooserIntent = fileChooserParams?.createIntent()
-                        ?: Intent(Intent.ACTION_GET_CONTENT).apply {
-                            type = "image/*"
-                            addCategory(Intent.CATEGORY_OPENABLE)
-                        }
+                    val cameraIntent = Intent(
+                        this@MainActivity,
+                        CameraCaptureActivity::class.java
+                    ).apply {
+                        putExtra(
+                            CameraCaptureActivity.EXTRA_FACING,
+                            requestedCameraFacing
+                        )
+                    }
 
-                    filePicker.launch(chooserIntent)
+                    filePicker.launch(cameraIntent)
                     true
                 } catch (_: Exception) {
                     fileCallback = null
+
                     Toast.makeText(
                         this@MainActivity,
-                        "تعذر فتح اختيار الملفات",
+                        "تعذر فتح الكاميرا",
                         Toast.LENGTH_SHORT
                     ).show()
+
                     false
                 }
             }
@@ -501,6 +519,14 @@ class MainActivity : AppCompatActivity() {
                 splash.alpha = 1f
             }
             .start()
+    }
+
+    inner class MashwarakCameraBridge {
+        @JavascriptInterface
+        fun setCaptureMode(mode: String?) {
+            requestedCameraFacing =
+                if (mode.equals("front", ignoreCase = true)) "front" else "rear"
+        }
     }
 
     private fun setupNotifications() {
