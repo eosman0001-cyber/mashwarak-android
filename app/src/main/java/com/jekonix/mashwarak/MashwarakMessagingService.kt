@@ -49,6 +49,7 @@ class MashwarakMessagingService : FirebaseMessagingService() {
 
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("OPEN_NOTIFICATIONS", true)
         }
         val pending = PendingIntent.getActivity(
             this, 1001, intent,

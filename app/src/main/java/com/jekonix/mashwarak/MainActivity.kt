@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.webkit.*
 import android.widget.FrameLayout
@@ -40,6 +41,7 @@ class MainActivity : AppCompatActivity() {
 
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private var pageShown = false
+    private var openNotificationsAfterLoad = false
 
     private val filePicker = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -56,6 +58,9 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        openNotificationsAfterLoad =
+            intent?.getBooleanExtra("OPEN_NOTIFICATIONS", false) == true
 
         // Android 15+ can draw edge-to-edge by default.
         // We handle system bars explicitly so the app never starts behind
@@ -196,9 +201,11 @@ class MainActivity : AppCompatActivity() {
                     pageShown = true
                     splash.postDelayed({
                         hideSplash()
+                        openNotificationsIfRequested()
                     }, 450)
                 } else {
                     hideSplash()
+                    openNotificationsIfRequested()
                 }
             }
         }
@@ -264,6 +271,53 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+
+        if (intent.getBooleanExtra("OPEN_NOTIFICATIONS", false)) {
+            openNotificationsAfterLoad = true
+
+            if (::webView.isInitialized) {
+                webView.postDelayed({
+                    openNotificationsIfRequested()
+                }, 450)
+            }
+        }
+    }
+
+    /**
+     * Google Sites hosts the Mashwarak web app inside its page, so Android
+     * cannot directly call a JavaScript function inside the cross-origin frame.
+     * The notifications bell is fixed at the upper-left of the Mashwarak UI.
+     * A synthetic tap is dispatched to that visible control only when the app
+     * was opened from a push notification.
+     */
+    private fun openNotificationsIfRequested() {
+        if (!openNotificationsAfterLoad || !::webView.isInitialized) return
+
+        openNotificationsAfterLoad = false
+
+        webView.postDelayed({
+            val x = dp(52).toFloat()
+            val y = dp(52).toFloat()
+            val now = android.os.SystemClock.uptimeMillis()
+
+            val down = MotionEvent.obtain(
+                now, now, MotionEvent.ACTION_DOWN, x, y, 0
+            )
+            val up = MotionEvent.obtain(
+                now, now + 80, MotionEvent.ACTION_UP, x, y, 0
+            )
+
+            webView.dispatchTouchEvent(down)
+            webView.dispatchTouchEvent(up)
+
+            down.recycle()
+            up.recycle()
+        }, 700)
     }
 
     private fun buildSplash(): FrameLayout {
