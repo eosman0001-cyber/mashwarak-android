@@ -18,6 +18,7 @@ android {
             val ksPath = System.getenv("MASHWARAK_KEYSTORE_PATH")
             if (!ksPath.isNullOrBlank()) {
                 storeFile = file(ksPath)
+                storeType = "pkcs12"
                 storePassword = System.getenv("MASHWARAK_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("MASHWARAK_KEY_ALIAS")
                 keyPassword = System.getenv("MASHWARAK_KEY_PASSWORD")
