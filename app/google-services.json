@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "327243985884",
+    "project_id": "mashwarak-896b4",
+    "storage_bucket": "mashwarak-896b4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:327243985884:android:c33a35eb234dff50d79519",
+        "android_client_info": {
+          "package_name": "com.jekonix.mashwarak"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDcHEyGKE6rBWIN7jUCihkxSxwd8hEYGyg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
