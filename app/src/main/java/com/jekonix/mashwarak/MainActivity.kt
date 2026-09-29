@@ -14,6 +14,7 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -22,7 +23,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.webkit.*
 import android.widget.FrameLayout
-import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -44,7 +44,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var progress: ProgressBar
     private lateinit var splash: FrameLayout
     private lateinit var root: FrameLayout
-    private lateinit var refreshButton: ImageButton
+    private lateinit var helpButton: TextView
 
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private var requestedCameraFacing: String = "rear"
@@ -132,37 +132,41 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        // Refresh / update-check button:
-        // dynamically follows the Google Sites info/exclamation control.
-        // RTL page/device -> lower-right | LTR page/device -> lower-left.
-        refreshButton = ImageButton(this).apply {
-            setImageResource(android.R.drawable.ic_popup_sync)
+        // Native help button:
+        // covers the Google Sites info/exclamation control without giving
+        // a dangerous one-tap refresh action.
+        // Width stays the same; height is slightly increased to fully cover
+        // the underlying Google control.
+        helpButton = TextView(this).apply {
+            text = "مساعدة"
+            textSize = 9.5f
+            setTextColor(Color.rgb(143, 23, 52))
+            gravity = Gravity.CENTER
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
             setBackgroundResource(R.drawable.refresh_button_bg)
-            setColorFilter(Color.rgb(165, 17, 49))
             elevation = dp(10).toFloat()
-            contentDescription = "التحقق من التحديث"
-            scaleType = ImageView.ScaleType.CENTER
-            setPadding(dp(11), dp(11), dp(11), dp(11))
+            contentDescription = "مساعدة"
+            isClickable = true
+            isFocusable = true
+            setPadding(dp(2), 0, dp(2), 0)
             setOnClickListener {
-                webView.stopLoading()
-                showSplash()
-                webView.reload()
+                showHelpCenter()
             }
         }
 
         root.addView(
-            refreshButton,
-            FrameLayout.LayoutParams(dp(50), dp(50)).apply {
+            helpButton,
+            FrameLayout.LayoutParams(dp(50), dp(58)).apply {
                 gravity = Gravity.BOTTOM or Gravity.START
                 marginStart = dp(14)
-                bottomMargin = dp(12)
+                bottomMargin = dp(8)
             }
         )
 
         // Set an initial side immediately from the Android layout direction.
         // After Google Sites finishes loading, the page direction is checked
         // again and this button is moved if needed.
-        updateRefreshButtonPositionFromDevice()
+        updateHelpButtonPositionFromDevice()
 
         splash = buildSplash()
         root.addView(
@@ -199,7 +203,7 @@ class MainActivity : AppCompatActivity() {
             allowContentAccess = true
             javaScriptCanOpenWindowsAutomatically = true
             mediaPlaybackRequiresUserGesture = false
-            userAgentString = "$userAgentString MashwarakAndroid/1.9"
+            userAgentString = "$userAgentString MashwarakAndroid/1.10"
         }
 
         webView.addJavascriptInterface(
@@ -243,7 +247,7 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 progress.visibility = View.GONE
 
-                updateRefreshButtonPositionFromPage()
+                updateHelpButtonPositionFromPage()
 
                 // Small delay prevents the raw Google Sites frame from
                 // flashing before the page is visually ready.
@@ -351,14 +355,14 @@ class MainActivity : AppCompatActivity() {
      * A synthetic tap is dispatched to that visible control only when the app
      * was opened from a push notification.
      */
-    private fun updateRefreshButtonPositionFromDevice() {
+    private fun updateHelpButtonPositionFromDevice() {
         val isRtl = resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
-        positionRefreshButton(isRtl)
+        positionHelpButton(isRtl)
     }
 
-    private fun updateRefreshButtonPositionFromPage() {
+    private fun updateHelpButtonPositionFromPage() {
         if (!::webView.isInitialized) {
-            updateRefreshButtonPositionFromDevice()
+            updateHelpButtonPositionFromDevice()
             return
         }
 
@@ -385,23 +389,23 @@ class MainActivity : AppCompatActivity() {
         webView.evaluateJavascript(js) { result ->
             val dir = result?.replace("\"", "")?.trim()?.lowercase()
             when (dir) {
-                "rtl" -> positionRefreshButton(true)
-                "ltr" -> positionRefreshButton(false)
-                else -> updateRefreshButtonPositionFromDevice()
+                "rtl" -> positionHelpButton(true)
+                "ltr" -> positionHelpButton(false)
+                else -> updateHelpButtonPositionFromDevice()
             }
         }
     }
 
-    private fun positionRefreshButton(isRtl: Boolean) {
-        if (!::refreshButton.isInitialized) return
+    private fun positionHelpButton(isRtl: Boolean) {
+        if (!::helpButton.isInitialized) return
 
-        val lp = (refreshButton.layoutParams as? FrameLayout.LayoutParams)
-            ?: FrameLayout.LayoutParams(dp(50), dp(50))
+        val lp = (helpButton.layoutParams as? FrameLayout.LayoutParams)
+            ?: FrameLayout.LayoutParams(dp(50), dp(58))
 
         lp.width = dp(50)
-        lp.height = dp(50)
+        lp.height = dp(58)
         lp.gravity = Gravity.BOTTOM or if (isRtl) Gravity.END else Gravity.START
-        lp.bottomMargin = dp(12)
+        lp.bottomMargin = dp(8)
 
         if (isRtl) {
             lp.marginEnd = dp(14)
@@ -411,8 +415,270 @@ class MainActivity : AppCompatActivity() {
             lp.marginEnd = 0
         }
 
-        refreshButton.layoutParams = lp
-        refreshButton.requestLayout()
+        helpButton.layoutParams = lp
+        helpButton.requestLayout()
+    }
+
+
+    private fun showHelpCenter() {
+        val dialog = android.app.Dialog(this)
+        val sheet = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(16), dp(16), dp(16), dp(18))
+            background = roundedBackground(
+                color = Color.WHITE,
+                radiusDp = 20f
+            )
+        }
+
+        val title = TextView(this).apply {
+            text = "مساعدة"
+            textSize = 20f
+            setTextColor(Color.rgb(55, 38, 45))
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+            gravity = Gravity.RIGHT
+        }
+        sheet.addView(
+            title,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        val subtitle = TextView(this).apply {
+            text = "اختار اللي محتاجه بدون ما نخاطر ببيانات طلبك."
+            textSize = 11f
+            setTextColor(Color.rgb(121, 109, 114))
+            gravity = Gravity.RIGHT
+        }
+        sheet.addView(
+            subtitle,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(3)
+                bottomMargin = dp(12)
+            }
+        )
+
+        sheet.addView(
+            makeHelpOption(
+                "طريقة استخدام التطبيق",
+                "شغّل الشرح التفاعلي خطوة بخطوة"
+            ) {
+                dialog.dismiss()
+                startWebUsageTour()
+            }
+        )
+
+        sheet.addView(
+            makeHelpOption(
+                "تواصل معنا",
+                "اتصال أو واتساب مع مشوارك"
+            ) {
+                dialog.dismiss()
+                showContactOptions()
+            }
+        )
+
+        sheet.addView(
+            makeHelpOption(
+                "تحديث الصفحة",
+                "التحديث لا يتم إلا بعد تأكيد منك"
+            ) {
+                dialog.dismiss()
+                showRefreshConfirmation()
+            }
+        )
+
+        dialog.setContentView(sheet)
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setGravity(Gravity.BOTTOM)
+            attributes = attributes.apply {
+                dimAmount = 0.42f
+            }
+            addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        }
+
+        dialog.show()
+
+        dialog.window?.setLayout(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        )
+    }
+
+    private fun makeHelpOption(
+        titleText: String,
+        subtitleText: String,
+        onClick: () -> Unit
+    ): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            isClickable = true
+            isFocusable = true
+            setPadding(dp(13), dp(11), dp(13), dp(11))
+            background = roundedBackground(
+                color = Color.rgb(250, 247, 248),
+                radiusDp = 14f,
+                strokeColor = Color.rgb(232, 222, 225),
+                strokeWidthDp = 1
+            )
+
+            val main = TextView(this@MainActivity).apply {
+                text = titleText
+                textSize = 14f
+                setTextColor(Color.rgb(111, 15, 42))
+                setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+                gravity = Gravity.RIGHT
+            }
+
+            val sub = TextView(this@MainActivity).apply {
+                text = subtitleText
+                textSize = 10.5f
+                setTextColor(Color.rgb(124, 113, 118))
+                gravity = Gravity.RIGHT
+            }
+
+            addView(
+                main,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+            addView(
+                sub,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(2)
+                }
+            )
+
+            setOnClickListener { onClick() }
+
+            val lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            lp.bottomMargin = dp(8)
+            layoutParams = lp
+        }
+    }
+
+    private fun showContactOptions() {
+        val options = arrayOf("واتساب", "اتصال")
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("تواصل معنا")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> {
+                        val uri = Uri.parse("https://wa.me/201098505030")
+                        try {
+                            startActivity(Intent(Intent.ACTION_VIEW, uri))
+                        } catch (_: Exception) {
+                            Toast.makeText(
+                                this,
+                                "تعذر فتح واتساب",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                    1 -> {
+                        val uri = Uri.parse("tel:+201098505030")
+                        try {
+                            startActivity(Intent(Intent.ACTION_DIAL, uri))
+                        } catch (_: Exception) {
+                            Toast.makeText(
+                                this,
+                                "تعذر فتح الاتصال",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    private fun showRefreshConfirmation() {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("تحديث الصفحة؟")
+            .setMessage(
+                "قد تفقد البيانات التي كتبتها ولم ترسلها بعد. " +
+                    "لن يتم التحديث إلا إذا ضغطت «تحديث»."
+            )
+            .setNegativeButton("إلغاء", null)
+            .setPositiveButton("تحديث") { _, _ ->
+                webView.stopLoading()
+                showSplash()
+                webView.reload()
+            }
+            .show()
+    }
+
+    private fun startWebUsageTour() {
+        if (!::webView.isInitialized) return
+
+        val js = """
+            (function() {
+              try {
+                var message = { type: 'mashwarak-start-tour' };
+                var frames = document.querySelectorAll('iframe');
+                var sent = 0;
+
+                for (var i = 0; i < frames.length; i++) {
+                  try {
+                    if (frames[i].contentWindow) {
+                      frames[i].contentWindow.postMessage(message, '*');
+                      sent++;
+                    }
+                  } catch (e) {}
+                }
+
+                try {
+                  window.postMessage(message, '*');
+                } catch (e) {}
+
+                return sent;
+              } catch (e) {
+                return -1;
+              }
+            })();
+        """.trimIndent()
+
+        webView.evaluateJavascript(js) {
+            Toast.makeText(
+                this,
+                "تم فتح شرح الاستخدام",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    private fun roundedBackground(
+        color: Int,
+        radiusDp: Float,
+        strokeColor: Int? = null,
+        strokeWidthDp: Int = 0
+    ): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(color)
+            cornerRadius = dp(radiusDp.toInt()).toFloat()
+
+            if (strokeColor != null && strokeWidthDp > 0) {
+                setStroke(dp(strokeWidthDp), strokeColor)
+            }
+        }
     }
 
     private fun openNotificationsIfRequested() {
