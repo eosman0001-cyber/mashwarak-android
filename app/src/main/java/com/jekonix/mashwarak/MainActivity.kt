@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.ContentValues
 import android.media.MediaScannerConnection
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.util.Base64
 import java.io.File
@@ -203,7 +205,7 @@ class MainActivity : AppCompatActivity() {
             allowContentAccess = true
             javaScriptCanOpenWindowsAutomatically = true
             mediaPlaybackRequiresUserGesture = false
-            userAgentString = "$userAgentString MashwarakAndroid/1.10"
+            userAgentString = "$userAgentString MashwarakAndroid/1.11"
         }
 
         webView.addJavascriptInterface(
@@ -628,39 +630,108 @@ class MainActivity : AppCompatActivity() {
     private fun startWebUsageTour() {
         if (!::webView.isInitialized) return
 
-        val js = """
+        val installAndBroadcastJs = """
             (function() {
               try {
-                var message = { type: 'mashwarak-start-tour' };
-                var frames = document.querySelectorAll('iframe');
-                var sent = 0;
+                window.__mashwarakTourAck = false;
 
-                for (var i = 0; i < frames.length; i++) {
-                  try {
-                    if (frames[i].contentWindow) {
-                      frames[i].contentWindow.postMessage(message, '*');
-                      sent++;
-                    }
-                  } catch (e) {}
+                if (!window.__mashwarakTourAckInstalled) {
+                  window.__mashwarakTourAckInstalled = true;
+
+                  window.addEventListener('message', function(ev) {
+                    try {
+                      if (ev && ev.data && ev.data.type === 'mashwarak-tour-started') {
+                        window.__mashwarakTourAck = true;
+                      }
+                    } catch (e) {}
+                  });
                 }
 
-                try {
-                  window.postMessage(message, '*');
-                } catch (e) {}
+                window.__mashwarakBroadcastTour = function() {
+                  var message = { type: 'mashwarak-start-tour' };
+                  var sent = 0;
+                  var visited = [];
 
-                return sent;
+                  function alreadyVisited(w) {
+                    for (var x = 0; x < visited.length; x++) {
+                      if (visited[x] === w) return true;
+                    }
+                    return false;
+                  }
+
+                  function broadcast(win, depth) {
+                    if (!win || depth > 12 || alreadyVisited(win)) return;
+
+                    visited.push(win);
+
+                    try {
+                      win.postMessage(message, '*');
+                      sent++;
+                    } catch (e) {}
+
+                    var count = 0;
+
+                    try {
+                      count = win.length || 0;
+                    } catch (e) {
+                      try {
+                        count = win.frames.length || 0;
+                      } catch (ignore) {
+                        count = 0;
+                      }
+                    }
+
+                    for (var i = 0; i < count; i++) {
+                      try {
+                        broadcast(win[i], depth + 1);
+                      } catch (e) {
+                        try {
+                          broadcast(win.frames[i], depth + 1);
+                        } catch (ignore) {}
+                      }
+                    }
+                  }
+
+                  broadcast(window, 0);
+                  return sent;
+                };
+
+                return window.__mashwarakBroadcastTour();
               } catch (e) {
                 return -1;
               }
             })();
         """.trimIndent()
 
-        webView.evaluateJavascript(js) {
-            Toast.makeText(
-                this,
-                "تم فتح شرح الاستخدام",
-                Toast.LENGTH_SHORT
-            ).show()
+        webView.evaluateJavascript(installAndBroadcastJs) {
+            // Google Sites can nest the Apps Script app more than one iframe deep.
+            // Send a second pass after the frame tree has had time to receive the first one.
+            Handler(Looper.getMainLooper()).postDelayed({
+                webView.evaluateJavascript(
+                    "(function(){try{return window.__mashwarakBroadcastTour?window.__mashwarakBroadcastTour():-1}catch(e){return -1}})();",
+                    null
+                )
+            }, 280)
+
+            // Do not show a false success message. Confirm that the actual
+            // Mashwarak page acknowledged starting the walkthrough.
+            Handler(Looper.getMainLooper()).postDelayed({
+                webView.evaluateJavascript(
+                    "(function(){try{return window.__mashwarakTourAck===true}catch(e){return false}})();"
+                ) { result ->
+                    val started = result?.trim()?.equals("true", ignoreCase = true) == true
+
+                    Toast.makeText(
+                        this,
+                        if (started) {
+                            "تم فتح شرح الاستخدام"
+                        } else {
+                            "تعذر فتح الشرح الآن، جرّب مرة أخرى"
+                        },
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }, 950)
         }
     }
 
