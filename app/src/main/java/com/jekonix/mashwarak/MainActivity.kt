@@ -108,30 +108,9 @@ class MainActivity : AppCompatActivity() {
 
         root = FrameLayout(this).apply {
             setBackgroundColor(Color.WHITE)
-            // V1.13 | Keep launch focus outside the WebView so the page does not
-            // reveal keyboard-accessibility skip links on startup.
-            isFocusable = true
-            isFocusableInTouchMode = true
-            requestFocus()
         }
 
-        webView = WebView(this).apply {
-            // V1.13 | Do not focus the WebView during page startup.
-            // Transfer native focus only on the user's first real touch. This keeps
-            // the Arabic IME fix while preventing the page's hidden skip links from
-            // becoming visibly focused as soon as the app opens.
-            isFocusable = true
-            isFocusableInTouchMode = true
-
-            setOnTouchListener { view, event ->
-                if (event.actionMasked == MotionEvent.ACTION_DOWN && !view.hasFocus()) {
-                    view.requestFocusFromTouch()
-                }
-                // Never consume the touch; the tapped HTML control receives the
-                // same ACTION_DOWN and can take DOM focus normally.
-                false
-            }
-        }
+        webView = WebView(this)
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             visibility = View.VISIBLE
@@ -226,7 +205,7 @@ class MainActivity : AppCompatActivity() {
             allowContentAccess = true
             javaScriptCanOpenWindowsAutomatically = true
             mediaPlaybackRequiresUserGesture = false
-            userAgentString = "$userAgentString MashwarakAndroid/1.12"
+            userAgentString = "$userAgentString MashwarakAndroid/1.11"
         }
 
         webView.addJavascriptInterface(
@@ -269,10 +248,6 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 progress.visibility = View.GONE
-
-                // V1.13 | Intentionally do not request WebView focus here.
-                // Startup focus remains on the native root until the user touches
-                // the page, preventing accessibility skip links from appearing.
 
                 updateHelpButtonPositionFromPage()
 
