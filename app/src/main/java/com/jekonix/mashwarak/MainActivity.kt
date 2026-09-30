@@ -110,7 +110,27 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.WHITE)
         }
 
-        webView = WebView(this)
+        webView = WebView(this).apply {
+            // V1.12 | Keep the native WebView focused from the first touch.
+            // This prevents the first HTML text field from opening with a stale
+            // Android IME connection (seen especially with Arabic keyboards).
+            isFocusable = true
+            isFocusableInTouchMode = true
+            requestFocus(View.FOCUS_DOWN)
+
+            setOnTouchListener { view, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN ||
+                    event.actionMasked == MotionEvent.ACTION_UP
+                ) {
+                    view.requestFocusFromTouch()
+                    if (!view.hasFocus()) {
+                        view.requestFocus(View.FOCUS_DOWN)
+                    }
+                }
+                // Never consume the touch; HTML controls must receive it normally.
+                false
+            }
+        }
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             visibility = View.VISIBLE
@@ -205,7 +225,7 @@ class MainActivity : AppCompatActivity() {
             allowContentAccess = true
             javaScriptCanOpenWindowsAutomatically = true
             mediaPlaybackRequiresUserGesture = false
-            userAgentString = "$userAgentString MashwarakAndroid/1.11"
+            userAgentString = "$userAgentString MashwarakAndroid/1.12"
         }
 
         webView.addJavascriptInterface(
@@ -248,6 +268,10 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 progress.visibility = View.GONE
+
+                webView.isFocusable = true
+                webView.isFocusableInTouchMode = true
+                webView.requestFocus(View.FOCUS_DOWN)
 
                 updateHelpButtonPositionFromPage()
 

@@ -1,0 +1,12 @@
+MASHWARAK ANDROID V1.12 | versionCode 16
+
+Change scope: Android WebView focus / IME only.
+
+- Keeps WebView focusable and focused from startup.
+- Reasserts native WebView focus on ACTION_DOWN / ACTION_UP without consuming touch events.
+- Reasserts focus after page load.
+- Adds windowSoftInputMode=adjustResize.
+- No customer web, backend, Firebase, camera, notifications, URLs, or business logic changed.
+
+Purpose:
+Fix the first text-field focus / Arabic keyboard IME connection issue seen on captain registration, where typing starts only after touching another field or switching keyboard language.
