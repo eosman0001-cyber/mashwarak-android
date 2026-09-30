@@ -108,26 +108,27 @@ class MainActivity : AppCompatActivity() {
 
         root = FrameLayout(this).apply {
             setBackgroundColor(Color.WHITE)
+            // V1.13 | Keep launch focus outside the WebView so the page does not
+            // reveal keyboard-accessibility skip links on startup.
+            isFocusable = true
+            isFocusableInTouchMode = true
+            requestFocus()
         }
 
         webView = WebView(this).apply {
-            // V1.12 | Keep the native WebView focused from the first touch.
-            // This prevents the first HTML text field from opening with a stale
-            // Android IME connection (seen especially with Arabic keyboards).
+            // V1.13 | Do not focus the WebView during page startup.
+            // Transfer native focus only on the user's first real touch. This keeps
+            // the Arabic IME fix while preventing the page's hidden skip links from
+            // becoming visibly focused as soon as the app opens.
             isFocusable = true
             isFocusableInTouchMode = true
-            requestFocus(View.FOCUS_DOWN)
 
             setOnTouchListener { view, event ->
-                if (event.actionMasked == MotionEvent.ACTION_DOWN ||
-                    event.actionMasked == MotionEvent.ACTION_UP
-                ) {
+                if (event.actionMasked == MotionEvent.ACTION_DOWN && !view.hasFocus()) {
                     view.requestFocusFromTouch()
-                    if (!view.hasFocus()) {
-                        view.requestFocus(View.FOCUS_DOWN)
-                    }
                 }
-                // Never consume the touch; HTML controls must receive it normally.
+                // Never consume the touch; the tapped HTML control receives the
+                // same ACTION_DOWN and can take DOM focus normally.
                 false
             }
         }
@@ -269,9 +270,9 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 progress.visibility = View.GONE
 
-                webView.isFocusable = true
-                webView.isFocusableInTouchMode = true
-                webView.requestFocus(View.FOCUS_DOWN)
+                // V1.13 | Intentionally do not request WebView focus here.
+                // Startup focus remains on the native root until the user touches
+                // the page, preventing accessibility skip links from appearing.
 
                 updateHelpButtonPositionFromPage()
 

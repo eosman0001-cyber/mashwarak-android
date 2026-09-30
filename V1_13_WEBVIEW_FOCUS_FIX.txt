@@ -1,0 +1,19 @@
+MASHWARAK ANDROID V1.13 / versionCode 17
+
+Purpose:
+- Preserve the V1.12 Arabic IME/WebView first-input fix.
+- Prevent the accessibility links "Skip to main content" / "Skip to navigation" from appearing automatically on app launch.
+
+Changes:
+1. WebView is no longer requestFocus()'d at construction time.
+2. WebView is no longer requestFocus()'d in onPageFinished().
+3. Native root owns launch focus.
+4. WebView receives requestFocusFromTouch() only on the user's ACTION_DOWN, and the touch is not consumed.
+5. ACTION_UP no longer triggers another focus request, reducing interference with the first tapped HTML field.
+
+No changes to:
+- Firebase / FCM
+- Customer web business logic
+- Camera / file upload
+- App URL
+- Notification behavior
