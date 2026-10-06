@@ -12,9 +12,6 @@ if (cfgFile.exists()) cfgFile.inputStream().use { cfg.load(it) }
 fun cfg(name: String, fallback: String = "") =
     (cfg.getProperty(name) ?: fallback).replace("\\", "\\\\").replace("\"", "\\\"")
 
-val releaseVersionName = System.getenv("MASHWARAK_VERSION_NAME")?.trim().orEmpty().ifBlank { "1.11.6" }
-val releaseVersionCode = System.getenv("MASHWARAK_VERSION_CODE")?.trim()?.toIntOrNull() ?: 24
-
 android {
     signingConfigs {
         create("release") {
@@ -36,8 +33,8 @@ android {
         applicationId = "com.jekonix.mashwarak"
         minSdk = 24
         targetSdk = 35
-        versionCode = releaseVersionCode
-        versionName = releaseVersionName
+        versionCode = 23
+        versionName = "1.11.5"
 
         buildConfigField("String", "APP_URL", "\"${cfg("APP_URL")}\"")
         buildConfigField("String", "FCM_PROJECT_ID", "\"${cfg("FCM_PROJECT_ID")}\"")
