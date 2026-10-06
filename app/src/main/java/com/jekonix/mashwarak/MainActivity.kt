@@ -1,6 +1,10 @@
 package com.jekonix.mashwarak
 
 import android.Manifest
+import android.app.DownloadManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.ContentValues
@@ -9,9 +13,14 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.provider.Settings
 import android.util.Base64
 import java.io.File
 import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.Executors
+import org.json.JSONObject
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -55,6 +64,33 @@ class MainActivity : AppCompatActivity() {
     private var pageShown = false
     private var openNotificationsAfterLoad = false
     private var nativeBackRequestInFlight = false
+
+    // V1.11.5 | Native Update Center
+    // Releases are discovered from the public GitHub Releases API. The APK is
+    // downloaded by Android DownloadManager, then Android's own package
+    // installer asks the user to confirm installation.
+    private val updateExecutor = Executors.newSingleThreadExecutor()
+    private val updatePrefs by lazy {
+        getSharedPreferences("mashwarak_updates", Context.MODE_PRIVATE)
+    }
+    private var latestUpdateInfo: UpdateInfo? = null
+
+    private data class UpdateInfo(
+        val versionName: String,
+        val downloadUrl: String,
+        val releaseNotes: String,
+        val releasePageUrl: String
+    )
+
+    private val updateDownloadReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
+            val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+            val expected = updatePrefs.getLong(PREF_UPDATE_DOWNLOAD_ID, -1L)
+            if (id <= 0L || id != expected) return
+            handleCompletedUpdateDownload(id)
+        }
+    }
 
     private val filePicker = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -181,6 +217,14 @@ class MainActivity : AppCompatActivity() {
         )
 
         setContentView(root)
+
+        ContextCompat.registerReceiver(
+            this,
+            updateDownloadReceiver,
+            IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+            ContextCompat.RECEIVER_EXPORTED
+        )
+        applyStoredUpdateIndicator()
 
         // Apply safe area for status bar and navigation bar.
         // The WebView, refresh button, and splash all start below the phone's
@@ -321,6 +365,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         setupNotifications()
+        checkForUpdatesSilentlyOncePerDay()
 
         onBackPressedDispatcher.addCallback(
             this,
@@ -590,6 +635,23 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
+        val storedLatest = updatePrefs.getString(PREF_AVAILABLE_VERSION, "").orEmpty()
+        val updateSubtitle = if (isVersionNewer(storedLatest, BuildConfig.VERSION_NAME)) {
+            "تحديث جديد v$storedLatest متاح الآن"
+        } else {
+            "الإصدار الحالي ${BuildConfig.VERSION_NAME} • فحص وتنزيل التحديثات"
+        }
+
+        sheet.addView(
+            makeHelpOption(
+                "التحقق من آخر إصدار",
+                updateSubtitle
+            ) {
+                dialog.dismiss()
+                showUpdateCenter()
+            }
+        )
+
         sheet.addView(
             makeHelpOption(
                 "تحديث الصفحة",
@@ -713,6 +775,430 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("إلغاء", null)
             .show()
+    }
+
+    private fun showUpdateCenter() {
+        val dialog = android.app.Dialog(this)
+        val sheet = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(18), dp(18), dp(18), dp(20))
+            background = roundedBackground(
+                color = Color.WHITE,
+                radiusDp = 22f
+            )
+        }
+
+        val title = TextView(this).apply {
+            text = "تحديث مشوارك"
+            textSize = 20f
+            setTextColor(Color.rgb(55, 38, 45))
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+            gravity = Gravity.RIGHT
+        }
+        sheet.addView(title)
+
+        val currentVersion = TextView(this).apply {
+            text = "الإصدار الحالي: ${BuildConfig.VERSION_NAME}"
+            textSize = 11.5f
+            setTextColor(Color.rgb(122, 109, 114))
+            gravity = Gravity.RIGHT
+        }
+        sheet.addView(
+            currentVersion,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(4)
+                bottomMargin = dp(14)
+            }
+        )
+
+        val status = TextView(this).apply {
+            text = "اضغط «التحقق الآن» لمعرفة آخر إصدار متاح."
+            textSize = 13f
+            setTextColor(Color.rgb(67, 58, 62))
+            gravity = Gravity.RIGHT
+            setPadding(dp(13), dp(12), dp(13), dp(12))
+            background = roundedBackground(
+                color = Color.rgb(250, 247, 248),
+                radiusDp = 14f,
+                strokeColor = Color.rgb(232, 222, 225),
+                strokeWidthDp = 1
+            )
+        }
+        sheet.addView(
+            status,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        val checkButton = TextView(this).apply {
+            text = "التحقق الآن"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            setPadding(dp(12), dp(13), dp(12), dp(13))
+            background = roundedBackground(
+                color = Color.rgb(143, 23, 52),
+                radiusDp = 14f
+            )
+        }
+        sheet.addView(
+            checkButton,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(12) }
+        )
+
+        val downloadButton = TextView(this).apply {
+            text = "تنزيل التحديث"
+            textSize = 14f
+            setTextColor(Color.rgb(62, 44, 14))
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            visibility = View.GONE
+            setPadding(dp(12), dp(13), dp(12), dp(13))
+            background = roundedBackground(
+                color = Color.rgb(240, 211, 106),
+                radiusDp = 14f,
+                strokeColor = Color.rgb(222, 190, 78),
+                strokeWidthDp = 1
+            )
+        }
+        sheet.addView(
+            downloadButton,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(9) }
+        )
+
+        val closeButton = TextView(this).apply {
+            text = "إغلاق"
+            textSize = 12f
+            setTextColor(Color.rgb(105, 95, 99))
+            gravity = Gravity.CENTER
+            isClickable = true
+            setPadding(dp(10), dp(11), dp(10), dp(8))
+            setOnClickListener { dialog.dismiss() }
+        }
+        sheet.addView(
+            closeButton,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(4) }
+        )
+
+        fun renderUpdate(info: UpdateInfo?) {
+            latestUpdateInfo = info
+            if (info != null && isVersionNewer(info.versionName, BuildConfig.VERSION_NAME)) {
+                updatePrefs.edit()
+                    .putString(PREF_AVAILABLE_VERSION, info.versionName)
+                    .apply()
+                helpButton.text = "مساعدة ↑"
+
+                val notes = info.releaseNotes.trim().take(420)
+                status.text = buildString {
+                    append("يتوفر إصدار جديد: ${info.versionName}\n")
+                    append("الإصدار الحالي: ${BuildConfig.VERSION_NAME}")
+                    if (notes.isNotBlank()) {
+                        append("\n\n")
+                        append(notes)
+                    }
+                }
+                downloadButton.visibility = View.VISIBLE
+            } else {
+                updatePrefs.edit()
+                    .remove(PREF_AVAILABLE_VERSION)
+                    .apply()
+                helpButton.text = "مساعدة"
+                status.text = "✓ أنت تستخدم أحدث إصدار من مشوارك (${BuildConfig.VERSION_NAME})."
+                downloadButton.visibility = View.GONE
+            }
+        }
+
+        checkButton.setOnClickListener {
+            checkButton.isEnabled = false
+            checkButton.alpha = 0.65f
+            downloadButton.visibility = View.GONE
+            status.text = "جاري التحقق من آخر إصدار…"
+
+            fetchLatestUpdate { result ->
+                checkButton.isEnabled = true
+                checkButton.alpha = 1f
+                updatePrefs.edit()
+                    .putLong(PREF_LAST_UPDATE_CHECK, System.currentTimeMillis())
+                    .apply()
+
+                result.onSuccess { info ->
+                    renderUpdate(info)
+                }.onFailure {
+                    status.text = "تعذر التحقق الآن. تأكد من اتصال الإنترنت وحاول مرة أخرى."
+                }
+            }
+        }
+
+        downloadButton.setOnClickListener {
+            val info = latestUpdateInfo ?: return@setOnClickListener
+            if (!isVersionNewer(info.versionName, BuildConfig.VERSION_NAME)) {
+                renderUpdate(null)
+                return@setOnClickListener
+            }
+            downloadButton.isEnabled = false
+            downloadButton.alpha = 0.65f
+            status.text = "جاري بدء تنزيل الإصدار ${info.versionName}…\nسيظهر تقدم التنزيل في إشعارات الهاتف."
+            val started = startUpdateDownload(info)
+            if (!started) {
+                downloadButton.isEnabled = true
+                downloadButton.alpha = 1f
+                status.text = "تعذر بدء التنزيل. حاول مرة أخرى."
+            }
+        }
+
+        dialog.setContentView(sheet)
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setGravity(Gravity.BOTTOM)
+            attributes = attributes.apply { dimAmount = 0.42f }
+            addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        }
+        dialog.show()
+        dialog.window?.setLayout(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        )
+    }
+
+    private fun fetchLatestUpdate(onResult: (Result<UpdateInfo>) -> Unit) {
+        updateExecutor.execute {
+            val result = runCatching {
+                val connection = (URL(UPDATE_API_URL).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 10_000
+                    readTimeout = 10_000
+                    setRequestProperty("Accept", "application/vnd.github+json")
+                    setRequestProperty("User-Agent", "Mashwarak-Android/${BuildConfig.VERSION_NAME}")
+                    setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+                }
+
+                try {
+                    val status = connection.responseCode
+                    if (status !in 200..299) {
+                        throw IllegalStateException("GitHub update check failed: HTTP $status")
+                    }
+
+                    val body = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    val json = JSONObject(body)
+                    val rawTag = json.optString("tag_name", "").trim()
+                    val version = rawTag.removePrefix("v").removePrefix("V").trim()
+                    if (version.isBlank()) throw IllegalStateException("Release has no version tag")
+
+                    val assets = json.optJSONArray("assets")
+                    var apkUrl = ""
+                    if (assets != null) {
+                        for (i in 0 until assets.length()) {
+                            val asset = assets.optJSONObject(i) ?: continue
+                            val name = asset.optString("name", "")
+                            val url = asset.optString("browser_download_url", "")
+                            if (name.equals("Mashwarak.apk", ignoreCase = true) && url.startsWith("https://")) {
+                                apkUrl = url
+                                break
+                            }
+                            if (apkUrl.isBlank() && name.endsWith(".apk", ignoreCase = true) && url.startsWith("https://")) {
+                                apkUrl = url
+                            }
+                        }
+                    }
+                    if (apkUrl.isBlank()) throw IllegalStateException("Release APK asset was not found")
+
+                    UpdateInfo(
+                        versionName = version,
+                        downloadUrl = apkUrl,
+                        releaseNotes = json.optString("body", ""),
+                        releasePageUrl = json.optString("html_url", "")
+                    )
+                } finally {
+                    connection.disconnect()
+                }
+            }
+
+            runOnUiThread { onResult(result) }
+        }
+    }
+
+    private fun startUpdateDownload(info: UpdateInfo): Boolean {
+        return try {
+            val request = DownloadManager.Request(Uri.parse(info.downloadUrl)).apply {
+                setTitle("تحديث مشوارك ${info.versionName}")
+                setDescription("جاري تنزيل آخر إصدار من مشوارك")
+                setMimeType("application/vnd.android.package-archive")
+                setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                setAllowedOverMetered(true)
+                setAllowedOverRoaming(false)
+                // App-specific external Downloads needs no storage permission,
+                // while DownloadManager can still hand the completed APK to
+                // Android's package installer through a content URI.
+                setDestinationInExternalFilesDir(
+                    this@MainActivity,
+                    Environment.DIRECTORY_DOWNLOADS,
+                    "Mashwarak-v${info.versionName}.apk"
+                )
+            }
+
+            val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val id = manager.enqueue(request)
+            updatePrefs.edit()
+                .putLong(PREF_UPDATE_DOWNLOAD_ID, id)
+                .putString(PREF_DOWNLOADING_VERSION, info.versionName)
+                .apply()
+            Toast.makeText(this, "بدأ تنزيل تحديث مشوارك", Toast.LENGTH_SHORT).show()
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun handleCompletedUpdateDownload(downloadId: Long) {
+        val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        val cursor = manager.query(DownloadManager.Query().setFilterById(downloadId)) ?: return
+        cursor.use {
+            if (!it.moveToFirst()) return
+            val statusIndex = it.getColumnIndex(DownloadManager.COLUMN_STATUS)
+            if (statusIndex < 0) return
+            when (it.getInt(statusIndex)) {
+                DownloadManager.STATUS_SUCCESSFUL -> {
+                    val uri = manager.getUriForDownloadedFile(downloadId)
+                    if (uri == null) {
+                        Toast.makeText(this, "تم التنزيل لكن تعذر فتح ملف التحديث", Toast.LENGTH_LONG).show()
+                        return
+                    }
+                    updatePrefs.edit()
+                        .putString(PREF_PENDING_INSTALL_URI, uri.toString())
+                        .apply()
+                    requestInstallUpdate(uri)
+                }
+                DownloadManager.STATUS_FAILED -> {
+                    updatePrefs.edit()
+                        .remove(PREF_UPDATE_DOWNLOAD_ID)
+                        .remove(PREF_DOWNLOADING_VERSION)
+                        .apply()
+                    Toast.makeText(this, "فشل تنزيل التحديث. حاول مرة أخرى.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    private fun requestInstallUpdate(uri: Uri) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            updatePrefs.edit()
+                .putString(PREF_PENDING_INSTALL_URI, uri.toString())
+                .apply()
+            Toast.makeText(
+                this,
+                "اسمح لمشوارك بتثبيت التحديث، ثم ارجع للتطبيق.",
+                Toast.LENGTH_LONG
+            ).show()
+            try {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:$packageName")
+                    )
+                )
+            } catch (_: Exception) {
+                Toast.makeText(this, "تعذر فتح إعداد السماح بالتثبيت", Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+
+        try {
+            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(installIntent)
+            updatePrefs.edit()
+                .remove(PREF_PENDING_INSTALL_URI)
+                .remove(PREF_UPDATE_DOWNLOAD_ID)
+                .remove(PREF_DOWNLOADING_VERSION)
+                .apply()
+        } catch (_: Exception) {
+            Toast.makeText(this, "تعذر فتح مثبت التحديث", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun checkForUpdatesSilentlyOncePerDay() {
+        val now = System.currentTimeMillis()
+        val last = updatePrefs.getLong(PREF_LAST_UPDATE_CHECK, 0L)
+        if (last > 0L && now - last < UPDATE_CHECK_INTERVAL_MS) return
+
+        fetchLatestUpdate { result ->
+            updatePrefs.edit()
+                .putLong(PREF_LAST_UPDATE_CHECK, System.currentTimeMillis())
+                .apply()
+
+            result.onSuccess { info ->
+                if (isVersionNewer(info.versionName, BuildConfig.VERSION_NAME)) {
+                    updatePrefs.edit()
+                        .putString(PREF_AVAILABLE_VERSION, info.versionName)
+                        .apply()
+                    if (::helpButton.isInitialized) helpButton.text = "مساعدة ↑"
+                } else {
+                    updatePrefs.edit().remove(PREF_AVAILABLE_VERSION).apply()
+                    if (::helpButton.isInitialized) helpButton.text = "مساعدة"
+                }
+            }
+        }
+    }
+
+    private fun applyStoredUpdateIndicator() {
+        val latest = updatePrefs.getString(PREF_AVAILABLE_VERSION, "").orEmpty()
+        if (::helpButton.isInitialized) {
+            helpButton.text = if (isVersionNewer(latest, BuildConfig.VERSION_NAME)) "مساعدة ↑" else "مساعدة"
+        }
+    }
+
+    private fun isVersionNewer(candidate: String, current: String): Boolean {
+        if (candidate.isBlank()) return false
+        val a = candidate.removePrefix("v").removePrefix("V").split('.')
+        val b = current.removePrefix("v").removePrefix("V").split('.')
+        val count = maxOf(a.size, b.size)
+        for (i in 0 until count) {
+            val av = a.getOrNull(i)?.takeWhile { it.isDigit() }?.toIntOrNull() ?: 0
+            val bv = b.getOrNull(i)?.takeWhile { it.isDigit() }?.toIntOrNull() ?: 0
+            if (av != bv) return av > bv
+        }
+        return false
+    }
+
+    private fun checkPendingUpdateInstallOnResume() {
+        val raw = updatePrefs.getString(PREF_PENDING_INSTALL_URI, "").orEmpty()
+        if (raw.isBlank()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) return
+        runCatching { Uri.parse(raw) }
+            .getOrNull()
+            ?.let { requestInstallUpdate(it) }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::webView.isInitialized) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                checkPendingUpdateInstallOnResume()
+            }, 300)
+        }
     }
 
     private fun showRefreshConfirmation() {
@@ -1162,7 +1648,21 @@ class MainActivity : AppCompatActivity() {
         (value * resources.displayMetrics.density).toInt()
 
     override fun onDestroy() {
-        webView.destroy()
+        runCatching { unregisterReceiver(updateDownloadReceiver) }
+        updateExecutor.shutdownNow()
+        if (::webView.isInitialized) webView.destroy()
         super.onDestroy()
     }
+
+    companion object {
+        private const val UPDATE_API_URL =
+            "https://api.github.com/repos/eosman0001-cyber/mashwarak-android/releases/latest"
+        private const val UPDATE_CHECK_INTERVAL_MS = 24L * 60L * 60L * 1000L
+        private const val PREF_LAST_UPDATE_CHECK = "last_update_check"
+        private const val PREF_AVAILABLE_VERSION = "available_version"
+        private const val PREF_UPDATE_DOWNLOAD_ID = "update_download_id"
+        private const val PREF_DOWNLOADING_VERSION = "downloading_version"
+        private const val PREF_PENDING_INSTALL_URI = "pending_install_uri"
+    }
+
 }
