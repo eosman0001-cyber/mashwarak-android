@@ -1,5 +1,14 @@
-مشوارك Android APK V1.0
-========================
+مشوارك Android APK V1.11.4
+===========================
+
+الإصدار الحالي V1.11.4 | versionCode 22
+--------------------------------------
+- يفتح التطبيق من الدومين الرسمي: https://www.mshwarak.org/
+- لا يستخدم رابط Apps Script المباشر كـ APP_URL.
+- شاشة البداية تستخدم شعار مشوارك الرسمي عالي الدقة بدل أيقونة Launcher الصغيرة.
+- يحتفظ بإصلاح Native Back Navigation والـ User-Agent الديناميكي.
+- WEB_UPDATE متزامن مع Customer Web V2.4.3 المختبر.
+
 
 المشروع مبني بنفس فكرة تطبيق السلامة:
 - WebView لتشغيل Google Sites.
@@ -13,8 +22,8 @@
 - البناء المجاني عن طريق GitHub Actions.
 
 قبل البناء:
-1) رابط Google Sites تم تركيبه بالفعل:
-   https://sites.google.com/view/mshwarak/mashwarak
+1) رابط التشغيل الرسمي عبر الدومين الخاص بمشوارك تم تركيبه بالفعل:
+   https://www.mshwarak.org/
 2) أنشئ Firebase Project باسم Mashwarak.
 4) أضف Android App بالـ package:
    com.jekonix.mashwarak
@@ -41,8 +50,9 @@
 مرة واحدة فقط.
 
 ملاحظة:
-رابط Google Sites الخاص بمشوارك تم تركيبه بالفعل.
-المتبقي فقط بيانات Firebase لتفعيل الإشعارات الصوتية.
+رابط التشغيل الرسمي عبر الدومين الخاص بمشوارك تم تركيبه بالفعل:
+https://www.mshwarak.org/
+بيانات Firebase الحالية محفوظة كما هي.
 
 
 تحديث V1.1

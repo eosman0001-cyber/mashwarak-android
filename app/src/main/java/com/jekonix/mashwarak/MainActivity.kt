@@ -54,6 +54,7 @@ class MainActivity : AppCompatActivity() {
     private var pendingDownloadDataUrl: String? = null
     private var pageShown = false
     private var openNotificationsAfterLoad = false
+    private var nativeBackRequestInFlight = false
 
     private val filePicker = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -205,7 +206,7 @@ class MainActivity : AppCompatActivity() {
             allowContentAccess = true
             javaScriptCanOpenWindowsAutomatically = true
             mediaPlaybackRequiresUserGesture = false
-            userAgentString = "$userAgentString MashwarakAndroid/1.11"
+            userAgentString = "$userAgentString MashwarakAndroid/${BuildConfig.VERSION_NAME}"
         }
 
         webView.addJavascriptInterface(
@@ -325,14 +326,117 @@ class MainActivity : AppCompatActivity() {
             this,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    if (webView.canGoBack()) {
-                        webView.goBack()
-                    } else {
-                        finish()
-                    }
+                    handleMashwarakNativeBack()
                 }
             }
         )
+    }
+
+    /**
+     * Android edge-swipe / system Back must respect the Mashwarak UI hierarchy
+     * inside the Google Sites -> Apps Script frame:
+     * inner screen -> side drawer -> customer home -> exit app.
+     *
+     * Because the Mashwarak page is inside a cross-origin frame, Android cannot
+     * call its function directly. We broadcast a postMessage through the frame
+     * tree and wait briefly for the page to acknowledge whether it handled Back.
+     */
+    private fun handleMashwarakNativeBack() {
+        if (!::webView.isInitialized || nativeBackRequestInFlight) return
+        nativeBackRequestInFlight = true
+
+        val installAndBroadcastJs = """
+            (function() {
+              try {
+                window.__mashwarakBackAck = '';
+
+                if (!window.__mashwarakBackAckInstalled) {
+                  window.__mashwarakBackAckInstalled = true;
+
+                  window.addEventListener('message', function(ev) {
+                    try {
+                      if (ev && ev.data && ev.data.type === 'mashwarak-native-back-result') {
+                        window.__mashwarakBackAck = ev.data.handled === true ? 'handled' : 'exit';
+                      }
+                    } catch (e) {}
+                  });
+                }
+
+                var message = { type: 'mashwarak-native-back' };
+                var visited = [];
+
+                function alreadyVisited(w) {
+                  for (var x = 0; x < visited.length; x++) {
+                    if (visited[x] === w) return true;
+                  }
+                  return false;
+                }
+
+                function broadcast(win, depth) {
+                  if (!win || depth > 12 || alreadyVisited(win)) return;
+                  visited.push(win);
+
+                  try { win.postMessage(message, '*'); } catch (e) {}
+
+                  var count = 0;
+                  try {
+                    count = win.length || 0;
+                  } catch (e) {
+                    try { count = win.frames.length || 0; } catch (ignore) { count = 0; }
+                  }
+
+                  for (var i = 0; i < count; i++) {
+                    try {
+                      broadcast(win[i], depth + 1);
+                    } catch (e) {
+                      try { broadcast(win.frames[i], depth + 1); } catch (ignore) {}
+                    }
+                  }
+                }
+
+                broadcast(window, 0);
+                return true;
+              } catch (e) {
+                return false;
+              }
+            })();
+        """.trimIndent()
+
+        webView.evaluateJavascript(installAndBroadcastJs, null)
+
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (!::webView.isInitialized) {
+                nativeBackRequestInFlight = false
+                return@postDelayed
+            }
+
+            webView.evaluateJavascript(
+                "(function(){try{return window.__mashwarakBackAck||''}catch(e){return ''}})();"
+            ) { rawResult ->
+                nativeBackRequestInFlight = false
+
+                val result = rawResult
+                    ?.replace("\\u0022", "")
+                    ?.replace("\"", "")
+                    ?.trim()
+                    ?.lowercase()
+                    .orEmpty()
+
+                when (result) {
+                    "handled" -> {
+                        // The Mashwarak page already performed the requested step.
+                    }
+                    "exit" -> {
+                        // Only the real customer home returns exit.
+                        finish()
+                    }
+                    else -> {
+                        // Safe fallback if the inner app has not loaded yet.
+                        if (webView.canGoBack()) webView.goBack() else finish()
+                    }
+                }
+            }
+        }, 180)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -790,7 +894,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val logo = ImageView(this).apply {
-            setImageResource(R.mipmap.ic_launcher)
+            setImageResource(R.drawable.mashwarak_splash_logo)
             scaleType = ImageView.ScaleType.FIT_CENTER
         }
 

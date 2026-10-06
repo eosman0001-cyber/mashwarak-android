@@ -1,5 +1,5 @@
-# ضع رابط Google Sites الحالي لمشوارك هنا
-APP_URL=https://sites.google.com/view/mshwarak/mashwarak
+# رابط التشغيل الرسمي عبر الدومين الخاص بمشوارك
+APP_URL=https://www.mshwarak.org/
 
 # Firebase Cloud Messaging
 # Project ID من Firebase
