@@ -9,6 +9,8 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.ContentValues
 import android.media.MediaScannerConnection
+import android.location.Location
+import android.location.LocationManager
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
@@ -19,6 +21,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
 import org.json.JSONObject
 import android.content.pm.PackageManager
@@ -65,6 +69,14 @@ class MainActivity : AppCompatActivity() {
     private var openNotificationsAfterLoad = false
     private var nativeBackRequestInFlight = false
 
+    // V1.12.0 | Smart Location
+    private data class SharedLocation(val lat: Double, val lng: Double, val label: String = "")
+    private var pendingSharedDestination: SharedLocation? = null
+    private var pendingGeoOrigin: String? = null
+    private var pendingGeoCallback: GeolocationPermissions.Callback? = null
+    private var pendingNativeLocationRequest = false
+    private val locationExecutor = Executors.newSingleThreadExecutor()
+
     // V1.11.5 | Native Update Center
     // Releases are discovered from the public GitHub Releases API. The APK is
     // downloaded by Android DownloadManager, then Android's own package
@@ -110,6 +122,22 @@ class MainActivity : AppCompatActivity() {
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
+    private val geolocationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        val granted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        pendingGeoCallback?.invoke(pendingGeoOrigin, granted, false)
+        pendingGeoOrigin = null
+        pendingGeoCallback = null
+
+        if (pendingNativeLocationRequest) {
+            pendingNativeLocationRequest = false
+            if (granted) requestNativeCurrentLocationNow()
+            else broadcastNativeLocationError("لم يتم السماح باستخدام الموقع")
+        }
+    }
+
     private val storagePermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             val name = pendingDownloadName
@@ -135,6 +163,8 @@ class MainActivity : AppCompatActivity() {
 
         openNotificationsAfterLoad =
             intent?.getBooleanExtra("OPEN_NOTIFICATIONS", false) == true
+
+        captureInboundLocationIntent(intent)
 
         // Android 15+ can draw edge-to-edge by default.
         // We handle system bars explicitly so the app never starts behind
@@ -250,6 +280,7 @@ class MainActivity : AppCompatActivity() {
             allowContentAccess = true
             javaScriptCanOpenWindowsAutomatically = true
             mediaPlaybackRequiresUserGesture = false
+            setGeolocationEnabled(true)
             userAgentString = "$userAgentString MashwarakAndroid/${BuildConfig.VERSION_NAME}"
         }
 
@@ -261,6 +292,11 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(
             MashwarakDownloadBridge(),
             "MashwarakDownload"
+        )
+
+        webView.addJavascriptInterface(
+            MashwarakLocationBridge(),
+            "MashwarakLocation"
         )
 
         webView.webViewClient = object : WebViewClient() {
@@ -303,15 +339,44 @@ class MainActivity : AppCompatActivity() {
                     splash.postDelayed({
                         hideSplash()
                         openNotificationsIfRequested()
+                        dispatchPendingSharedDestination()
                     }, 450)
                 } else {
                     hideSplash()
                     openNotificationsIfRequested()
+                    dispatchPendingSharedDestination()
                 }
             }
         }
 
         webView.webChromeClient = object : WebChromeClient() {
+            override fun onGeolocationPermissionsShowPrompt(
+                origin: String?,
+                callback: GeolocationPermissions.Callback?
+            ) {
+                if (callback == null) return
+                val fine = ContextCompat.checkSelfPermission(
+                    this@MainActivity,
+                    Manifest.permission.ACCESS_FINE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+                val coarse = ContextCompat.checkSelfPermission(
+                    this@MainActivity,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+                if (fine || coarse) {
+                    callback.invoke(origin, true, false)
+                } else {
+                    pendingGeoOrigin = origin
+                    pendingGeoCallback = callback
+                    geolocationPermission.launch(
+                        arrayOf(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
+                        )
+                    )
+                }
+            }
+
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 progress.visibility =
                     if (newProgress >= 100) View.GONE else View.VISIBLE
@@ -488,6 +553,8 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
 
+        captureInboundLocationIntent(intent)
+
         if (intent.getBooleanExtra("OPEN_NOTIFICATIONS", false)) {
             openNotificationsAfterLoad = true
 
@@ -497,6 +564,279 @@ class MainActivity : AppCompatActivity() {
                 }, 450)
             }
         }
+    }
+
+
+
+    inner class MashwarakLocationBridge {
+        @JavascriptInterface
+        fun requestCurrentLocation() {
+            runOnUiThread { requestNativeCurrentLocation() }
+        }
+    }
+
+    private fun requestNativeCurrentLocation() {
+        val fine = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (fine || coarse) {
+            requestNativeCurrentLocationNow()
+        } else {
+            pendingNativeLocationRequest = true
+            geolocationPermission.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun requestNativeCurrentLocationNow() {
+        val manager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+            .filter { provider ->
+                try { manager.isProviderEnabled(provider) } catch (_: Exception) { false }
+            }
+
+        var best: Location? = null
+        for (provider in providers) {
+            val loc = try { manager.getLastKnownLocation(provider) } catch (_: Exception) { null }
+            if (loc != null && (best == null || loc.time > (best?.time ?: 0L))) best = loc
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && providers.isNotEmpty()) {
+            val provider = if (providers.contains(LocationManager.GPS_PROVIDER)) {
+                LocationManager.GPS_PROVIDER
+            } else providers.first()
+            try {
+                manager.getCurrentLocation(
+                    provider,
+                    null,
+                    ContextCompat.getMainExecutor(this)
+                ) { fresh ->
+                    val chosen = fresh ?: best
+                    if (chosen != null) broadcastNativeCurrentLocation(chosen)
+                    else broadcastNativeLocationError("تعذر تحديد الموقع الحالي")
+                }
+                return
+            } catch (_: Exception) {
+                // Fall through to the best cached location.
+            }
+        }
+
+        if (best != null) broadcastNativeCurrentLocation(best!!)
+        else broadcastNativeLocationError("شغّل GPS وحاول مرة أخرى")
+    }
+
+    private fun broadcastNativeCurrentLocation(location: Location) {
+        broadcastLocationMessage(
+            type = "mashwarak-current-location-result",
+            lat = location.latitude,
+            lng = location.longitude,
+            label = "موقعي الحالي"
+        )
+    }
+
+    private fun broadcastNativeLocationError(message: String) {
+        if (!::webView.isInitialized) return
+        val msg = JSONObject.quote(message)
+        val js = """
+            (function(){
+              try{
+                var message={type:'mashwarak-current-location-error',message:$msg};
+                var seen=[];
+                function walk(w,d){
+                  if(!w||d>12||seen.indexOf(w)>=0)return;
+                  seen.push(w);try{w.postMessage(message,'*')}catch(e){}
+                  var n=0;try{n=w.length||0}catch(e){}
+                  for(var i=0;i<n;i++){try{walk(w[i],d+1)}catch(e){}}
+                }
+                walk(window,0);
+              }catch(e){}
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(js, null)
+    }
+
+    private fun broadcastLocationMessage(type: String, lat: Double, lng: Double, label: String) {
+        if (!::webView.isInitialized) return
+        val typeJson = JSONObject.quote(type)
+        val labelJson = JSONObject.quote(label)
+        val js = """
+            (function(){
+              try{
+                var message={type:$typeJson,lat:$lat,lng:$lng,label:$labelJson};
+                var seen=[];
+                function walk(w,d){
+                  if(!w||d>12||seen.indexOf(w)>=0)return;
+                  seen.push(w);try{w.postMessage(message,'*')}catch(e){}
+                  var n=0;try{n=w.length||0}catch(e){}
+                  for(var i=0;i<n;i++){try{walk(w[i],d+1)}catch(e){}}
+                }
+                walk(window,0);
+              }catch(e){}
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(js, null)
+    }
+
+    /* =========================
+       V1.12.0 | SMART LOCATION
+       Accept geo links / shared Google Maps links and pre-fill "إلى أين".
+    ========================= */
+    private fun captureInboundLocationIntent(intent: Intent?) {
+        if (intent == null) return
+        val raw = when (intent.action) {
+            Intent.ACTION_VIEW -> intent.dataString.orEmpty()
+            Intent.ACTION_SEND -> {
+                if (intent.type?.startsWith("text/") == true) {
+                    intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
+                } else ""
+            }
+            else -> ""
+        }.trim()
+        if (raw.isBlank()) return
+
+        locationExecutor.execute {
+            val location = resolveSharedLocation(raw)
+            runOnUiThread {
+                if (location != null) {
+                    pendingSharedDestination = location
+                    Toast.makeText(
+                        this,
+                        "تم استيراد اللوكيشن إلى «إلى أين»",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    dispatchPendingSharedDestination()
+                } else {
+                    Toast.makeText(
+                        this,
+                        "تعذر قراءة إحداثيات اللوكيشن",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun resolveSharedLocation(rawInput: String): SharedLocation? {
+        extractCoordinates(rawInput)?.let { return it }
+        val url = Regex("https://\\S+", RegexOption.IGNORE_CASE)
+            .find(rawInput)?.value?.trimEnd('.', ',', ';', ')', ']') ?: return null
+        if (!isAllowedMapUrl(url)) return null
+
+        var current = url
+        repeat(6) {
+            extractCoordinates(current)?.let { return it }
+            if (!isAllowedMapUrl(current)) return null
+            try {
+                val conn = (URL(current).openConnection() as HttpURLConnection).apply {
+                    instanceFollowRedirects = false
+                    connectTimeout = 7000
+                    readTimeout = 7000
+                    requestMethod = "GET"
+                    setRequestProperty("User-Agent", "MashwarakAndroid/${BuildConfig.VERSION_NAME}")
+                }
+                val code = conn.responseCode
+                val location = conn.getHeaderField("Location").orEmpty()
+                conn.disconnect()
+                if (code in 300..399 && location.startsWith("https://") && isAllowedMapUrl(location)) {
+                    current = location
+                } else {
+                    return extractCoordinates(current)
+                }
+            } catch (_: Exception) {
+                return null
+            }
+        }
+        return extractCoordinates(current)
+    }
+
+    private fun isAllowedMapUrl(value: String): Boolean {
+        return try {
+            val uri = Uri.parse(value)
+            if (uri.scheme?.lowercase() != "https") return false
+            val host = uri.host?.lowercase().orEmpty()
+            when (host) {
+                "maps.app.goo.gl", "maps.google.com" -> true
+                "www.google.com", "google.com" -> uri.path.orEmpty().startsWith("/maps")
+                "goo.gl" -> uri.path.orEmpty().startsWith("/maps")
+                else -> false
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun extractCoordinates(rawInput: String): SharedLocation? {
+        val decoded = try {
+            URLDecoder.decode(rawInput.replace("+", "%20"), StandardCharsets.UTF_8.name())
+        } catch (_: Exception) {
+            rawInput
+        }
+        val patterns = listOf(
+            Regex("(?:query|q|ll|destination)=\\s*(-?\\d{1,2}(?:\\.\\d+)?)\\s*,\\s*(-?\\d{1,3}(?:\\.\\d+)?)", RegexOption.IGNORE_CASE),
+            Regex("@\\s*(-?\\d{1,2}(?:\\.\\d+)?)\\s*,\\s*(-?\\d{1,3}(?:\\.\\d+)?)"),
+            Regex("geo:\\s*(-?\\d{1,2}(?:\\.\\d+)?)\\s*,\\s*(-?\\d{1,3}(?:\\.\\d+)?)", RegexOption.IGNORE_CASE),
+            Regex("(?:^|[^\\d.-])(-?\\d{1,2}\\.\\d{4,})\\s*,\\s*(-?\\d{1,3}\\.\\d{4,})(?:[^\\d.]|$)")
+        )
+        for (pattern in patterns) {
+            val match = pattern.find(decoded) ?: continue
+            val lat = match.groupValues.getOrNull(1)?.toDoubleOrNull() ?: continue
+            val lng = match.groupValues.getOrNull(2)?.toDoubleOrNull() ?: continue
+            if (lat !in -90.0..90.0 || lng !in -180.0..180.0) continue
+            return SharedLocation(lat, lng, "موقع مستورد من الخريطة")
+        }
+        return null
+    }
+
+    private fun dispatchPendingSharedDestination() {
+        val location = pendingSharedDestination ?: return
+        if (!::webView.isInitialized) return
+
+        val labelJson = JSONObject.quote(location.label)
+        val js = """
+            (function(){
+              try{
+                var message={
+                  type:'mashwarak-import-destination-location',
+                  lat:${location.lat},
+                  lng:${location.lng},
+                  label:$labelJson,
+                  source:'ANDROID_INTENT'
+                };
+                var seen=[];
+                function walk(w,d){
+                  if(!w||d>12||seen.indexOf(w)>=0)return;
+                  seen.push(w);
+                  try{w.postMessage(message,'*')}catch(e){}
+                  var n=0;try{n=w.length||0}catch(e){}
+                  for(var i=0;i<n;i++){try{walk(w[i],d+1)}catch(e){}}
+                }
+                walk(window,0);
+                return true;
+              }catch(e){return false;}
+            })();
+        """.trimIndent()
+
+        // Google Sites hosts the customer app in a frame. Broadcast more than
+        // once so the message also reaches it if the frame finishes just after
+        // the outer page's onPageFinished callback.
+        listOf(0L, 700L, 1800L, 3500L, 6000L, 9000L).forEach { delay ->
+            webView.postDelayed({
+                if (::webView.isInitialized) webView.evaluateJavascript(js, null)
+            }, delay)
+        }
+        // Keep pending until the broadcasts have had time to reach the app.
+        webView.postDelayed({ pendingSharedDestination = null }, 11000L)
     }
 
     /**

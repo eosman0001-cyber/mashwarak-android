@@ -12,8 +12,8 @@ if (cfgFile.exists()) cfgFile.inputStream().use { cfg.load(it) }
 fun cfg(name: String, fallback: String = "") =
     (cfg.getProperty(name) ?: fallback).replace("\\", "\\\\").replace("\"", "\\\"")
 
-val releaseVersionName = System.getenv("MASHWARAK_VERSION_NAME")?.trim().orEmpty().ifBlank { "1.11.6" }
-val releaseVersionCode = System.getenv("MASHWARAK_VERSION_CODE")?.trim()?.toIntOrNull() ?: 24
+val releaseVersionName = System.getenv("MASHWARAK_VERSION_NAME")?.trim().orEmpty().ifBlank { "1.12.0" }
+val releaseVersionCode = System.getenv("MASHWARAK_VERSION_CODE")?.trim()?.toIntOrNull() ?: 25
 
 android {
     signingConfigs {

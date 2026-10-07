@@ -5271,6 +5271,40 @@ html.mwNativeAndroid #mwContactSheet .mwSheetActions{
   min-height:48px!important;
 }
 
+
+
+/* =========================================================
+   V2.5.0 | SMART LOCATION
+   Map code is lazy-loaded only when the customer requests it.
+========================================================= */
+.mwMapPickBtn{
+  width:100%;min-height:46px;margin-top:10px;border:1px solid #D8DFE8;
+  border-radius:14px;background:#F7FAFE;color:#153B75;font-weight:900;
+  display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;
+}
+.mwMapPickBtnGold{background:#FFF9E7;border-color:#E6CC78;color:#694A05}
+.mwMapPickBtn span{font-size:18px}
+.mwMapChoice{display:none;margin-top:8px;padding:9px 11px;border-radius:12px;
+  background:#EEF9F2;border:1px solid #9FD6B2;color:#17663C;font-size:10px;font-weight:800;line-height:1.65}
+.mwMapChoice.show{display:block}
+.mwMapChoice button{border:0;background:transparent;color:#A51131;font-weight:900;margin-inline-start:6px;cursor:pointer}
+.mwMapPicker{position:fixed;inset:0;z-index:10050;background:rgba(13,22,38,.62);display:none;align-items:flex-end;justify-content:center;padding:0}
+.mwMapPicker.active{display:flex}
+.mwMapPickerPanel{width:min(760px,100%);height:min(92dvh,820px);background:#fff;border-radius:24px 24px 0 0;
+  padding:14px;display:flex;flex-direction:column;box-shadow:0 -16px 46px rgba(0,0,0,.22)}
+.mwMapPickerHead{display:flex;direction:rtl;align-items:center;gap:10px;padding:2px 2px 10px}
+.mwMapPickerHead>div{flex:1;text-align:right}.mwMapPickerHead b{display:block;font-size:18px;color:#281E23}.mwMapPickerHead span{display:block;font-size:10px;color:#7C7277;margin-top:2px}
+.mwMapPickerClose{width:42px;height:42px;border:0;border-radius:13px;background:#F3F4F6;font-size:21px;color:#30343B}
+.mwMapCanvas{flex:1;min-height:330px;border-radius:18px;overflow:hidden;border:1px solid #DDE3EA;background:#E9EEF4}
+.mwMapStatus{direction:rtl;text-align:right;margin-top:8px;padding:8px 10px;border-radius:11px;background:#F7F8FA;color:#45505E;font-size:10px;font-weight:800}
+.mwMapTools{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.mwMapTools button{min-height:42px;border:1px solid #D9E0E8;border-radius:12px;background:#fff;font-weight:900;color:#183D75}
+.mwMapLabelField{direction:rtl;margin-top:8px}.mwMapLabelField label{display:block;font-size:10px;font-weight:900;color:#494047;margin-bottom:4px}.mwMapLabelField small{font-weight:600;color:#8A8185}.mwMapLabelField input{width:100%;box-sizing:border-box;min-height:44px;border:1px solid #D7DDE5;border-radius:12px;padding:8px 11px;font-family:inherit}
+.mwMapPickerActions{display:grid;grid-template-columns:34% 1fr;gap:8px;margin-top:10px;padding-bottom:calc(6px + env(safe-area-inset-bottom,0px))}.mwMapPickerActions button{min-height:48px;border-radius:14px;font-weight:900;border:0}.mwMapCancel{background:#F1F2F4;color:#555}.mwMapConfirm{background:#A51131;color:#fff}
+html.mwMapOpen,body.mwMapOpen{overflow:hidden!important}
+/* Automatic pricing is intentionally disabled in Smart Location phase 1. */
+#rideEstimateCard,.mwRideDonePrice{display:none!important}
+button[onclick*="openScreen('priceList')"],button[onclick*="drawerGo('priceList')"]{display:none!important}
+@media (min-width:760px){.mwMapPicker{align-items:center;padding:24px}.mwMapPickerPanel{border-radius:24px;height:min(86vh,760px)}}
 </style>
 </head>
 <body>
@@ -5386,6 +5420,14 @@ html.mwNativeAndroid #mwContactSheet .mwSheetActions{
 
       <input id="rideFrom" type="hidden" value="">
       <input id="rideTo" type="hidden" value="">
+      <input id="rideFromLat" type="hidden" value="">
+      <input id="rideFromLng" type="hidden" value="">
+      <input id="rideFromMapUrl" type="hidden" value="">
+      <input id="rideFromMapLabel" type="hidden" value="">
+      <input id="rideToLat" type="hidden" value="">
+      <input id="rideToLng" type="hidden" value="">
+      <input id="rideToMapUrl" type="hidden" value="">
+      <input id="rideToMapLabel" type="hidden" value="">
 
       <div id="rideFromGroup" class="mwField mwLocationGroup mwLocationFrom">
         <div class="mwFieldIcon">📍</div>
@@ -5413,6 +5455,10 @@ html.mwNativeAndroid #mwContactSheet .mwSheetActions{
           <div id="fromOtherWrap" class="mwSubField">
             <input id="rideFromOther" placeholder="اكتب القرية أو المنطقة" oninput="syncRideFrom()">
           </div>
+          <button type="button" class="mwMapPickBtn" onclick="openMashwarakMapPicker('FROM')">
+            <span>🗺️</span><b>حدد نقطة الانطلاق على الخريطة</b>
+          </button>
+          <div id="rideFromMapChoice" class="mwMapChoice" aria-live="polite"></div>
         </div>
       </div>
 
@@ -5448,6 +5494,10 @@ html.mwNativeAndroid #mwContactSheet .mwSheetActions{
             <input id="rideToOther" placeholder="اكتب القرية أو المنطقة" oninput="syncRideTo()">
           </div>
           <input id="rideToDetail" type="hidden" value="">
+          <button type="button" class="mwMapPickBtn mwMapPickBtnGold" onclick="openMashwarakMapPicker('TO')">
+            <span>📍</span><b>حدد الوجهة على الخريطة</b>
+          </button>
+          <div id="rideToMapChoice" class="mwMapChoice" aria-live="polite"></div>
         </div>
       </div>
 
@@ -5544,19 +5594,19 @@ html.mwNativeAndroid #mwContactSheet .mwSheetActions{
         <div class="mwAcHead">
           <div>
             <b>هل تحتاج سيارة بتكييف شغال؟</b>
-            <span>اختيار سيارة بتكييف شغال يضيف 100 جنيه على السعر المبدئي للمشوار.</span>
+            <span>حدد تفضيلك للتكييف ليظهر للكابتن ضمن تفاصيل الطلب.</span>
           </div>
-          <div class="mwAcBadge">+100 ج.م</div>
+          <div class="mwAcBadge">اختياري</div>
         </div>
 
         <div class="mwAcChoices">
           <button type="button" id="rideAcNo" onclick="setRideAcPreference('WITHOUT_AC')">
             <strong>بدون تكييف</strong>
-            <small>بدون زيادة على السعر</small>
+            <small>تفضيل محفوظ مع الطلب</small>
           </button>
           <button type="button" id="rideAcYes" onclick="setRideAcPreference('WITH_AC')">
             <strong>تكييف شغال</strong>
-            <small>يضاف 100 ج.م</small>
+            <small>تفضيل محفوظ مع الطلب</small>
           </button>
         </div>
       </div>
@@ -5601,9 +5651,9 @@ html.mwNativeAndroid #mwContactSheet .mwSheetActions{
         <span>تأكيد هاتفي أو واتساب</span>
       </div>
       <div class="mwFeature" role="button" tabindex="0" onclick="openFeatureInfo('price')">
-        <div class="mwFeatureIcon">🏷️</div>
-        <b>سعر واضح</b>
-        <span>تأكيد التكلفة قبل الرحلة</span>
+        <div class="mwFeatureIcon">📍</div>
+        <b>موقع أدق</b>
+        <span>حدد من وإلى على الخريطة</span>
       </div>
     </div>
     <div class="mwCredit">تم الإنشاء والتطوير بواسطة / <a href="https://sites.google.com/view/jekonix/jekonix" target="_blank" rel="noopener">شركة JEKONIX</a></div>
@@ -5857,7 +5907,7 @@ html.mwNativeAndroid #mwContactSheet .mwSheetActions{
       <div class="mwRideDoneHero">
         <div class="mwRideDoneCheck">✓</div>
         <h2>تم استلام طلبك بنجاح</h2>
-        <p>تم تسجيل طلب المشوار، وسيتم التواصل معك هاتفيًا لتأكيد الرحلة والسعر النهائي.</p>
+        <p>تم تسجيل طلب المشوار بنجاح، وتم حفظ بيانات نقطة الانطلاق والوجهة مع الطلب.</p>
         <div class="mwRideDoneId">
           <span>رقم الطلب</span>
           <b id="rideDoneId">—</b>
@@ -5902,7 +5952,7 @@ html.mwNativeAndroid #mwContactSheet .mwSheetActions{
       </div>
 
       <div class="mwRideDoneNote">
-        احتفظ برقم الطلب أو حمّل صورة الطلب. السعر الظاهر مبدئي، والتأكيد النهائي للرحلة والسعر يتم هاتفيًا من إدارة مشوارك.
+        احتفظ برقم الطلب أو حمّل صورة الطلب. سيتم التواصل معك لتأكيد تفاصيل الرحلة والتنسيق.
       </div>
 
       <div class="mwRideDoneActions">
@@ -5925,8 +5975,8 @@ html.mwNativeAndroid #mwContactSheet .mwSheetActions{
         <h2>طلب مشوارك بسيط</h2>
         <p>حدد مكان الانطلاق والوجهة والميعاد، وبعدها اكتب بيانات التواصل. الإدارة تتواصل معك لتأكيد الرحلة.</p>
       </div>
-      <div class="mwGuideCard"><div class="num">1</div><b>حدد مكان الانطلاق</b><p>الانطلاق حاليًا من المنوفية. اختر المركز ثم القرية أو المنطقة.</p></div>
-      <div class="mwGuideCard"><div class="num">2</div><b>حدد وجهتك</b><p>اختر المحافظة ثم المركز / المدينة ثم القرية أو المنطقة من القوائم.</p></div>
+      <div class="mwGuideCard"><div class="num">1</div><b>حدد مكان الانطلاق</b><p>اختر المركز والقرية، أو استخدم الخريطة لتحديد نقطة الانطلاق بدقة.</p></div>
+      <div class="mwGuideCard"><div class="num">2</div><b>حدد وجهتك</b><p>اختر الوجهة من القوائم، أو حددها مباشرة على الخريطة، أو استورد لوكيشن مشترك.</p></div>
       <div class="mwGuideCard"><div class="num">3</div><b>اختر التاريخ والوقت</b><p>حدد موعد الرحلة بدقة حتى يتم التنسيق مع الكابتن المناسب.</p></div>
       <div class="mwGuideCard"><div class="num">4</div><b>بيانات التواصل</b><p>بعد الضغط على طلب المشوار اكتب الاسم والموبايل وعدد الركاب، وسيتم التواصل معك للتأكيد.</p></div>
       <div class="mwGuideCard"><div class="num">✈</div><b>مشاوير المطار</b><p>اختر نقطة الانطلاق أو الوجهة ثم حدد المطار من قائمة مطارات مصر.</p></div>
@@ -6415,6 +6465,34 @@ html.mwNativeAndroid #mwContactSheet .mwSheetActions{
 </div>
 
 
+
+<!-- SMART LOCATION V2.5.0 | Lazy map picker -->
+<div id="mwMapPicker" class="mwMapPicker" aria-hidden="true">
+  <div class="mwMapPickerPanel">
+    <div class="mwMapPickerHead">
+      <button type="button" class="mwMapPickerClose" onclick="closeMashwarakMapPicker()">✕</button>
+      <div>
+        <b id="mwMapPickerTitle">حدد الموقع</b>
+        <span>حرّك العلامة أو اضغط على الخريطة لتحديد النقطة بدقة</span>
+      </div>
+    </div>
+    <div id="mwMapCanvas" class="mwMapCanvas"></div>
+    <div id="mwMapStatus" class="mwMapStatus">اختر نقطة على الخريطة</div>
+    <div class="mwMapTools">
+      <button type="button" onclick="useMyCurrentLocationForMap()">📡 موقعي الحالي</button>
+      <button type="button" onclick="pasteLocationLinkForMap()">🔗 لصق رابط لوكيشن</button>
+    </div>
+    <div class="mwMapLabelField">
+      <label for="mwMapLabelInput">وصف المكان <small>(اختياري)</small></label>
+      <input id="mwMapLabelInput" placeholder="مثال: أمام مستشفى / بوابة النادي / اسم الشارع">
+    </div>
+    <div class="mwMapPickerActions">
+      <button type="button" class="mwMapCancel" onclick="closeMashwarakMapPicker()">إلغاء</button>
+      <button type="button" class="mwMapConfirm" onclick="confirmMashwarakMapLocation()">تأكيد الموقع</button>
+    </div>
+  </div>
+</div>
+
 <div id="rideSubmitOverlay" class="mwRideSubmitOverlay" aria-hidden="true" role="status" aria-live="polite" aria-label="جاري تسجيل طلب المشوار">
   <div class="mwRideSubmitCard">
     <div class="mwRideSubmitSpinner" aria-hidden="true"></div>
@@ -6461,13 +6539,11 @@ document.addEventListener('DOMContentLoaded',()=>{
     .withSuccessHandler(r=>{
       publicBoot=r||{};
       loadPublicNotifications();
-      loadPublicPrices();
       handleMashwarakLaunchAction();
       maybeStartFirstUseTour();
     })
     .withFailureHandler(()=>{
       loadPublicNotifications();
-      loadPublicPrices();
       handleMashwarakLaunchAction();
       maybeStartFirstUseTour();
     })
@@ -6487,13 +6563,13 @@ const usageTourSteps=[
     step:1,
     target:'#rideFromGroup',
     title:'ابدأ من مكان الانطلاق',
-    text:'اختر المركز أولًا، وبعده اختر القرية أو المنطقة. كل جزء له إطار واضح علشان تعرف تبدأ منين.'
+    text:'اختر المكان من القوائم أو اضغط «حدد نقطة الانطلاق على الخريطة» لتسجيل الموقع بدقة.'
   },
   {
     step:1,
     target:'#rideToGroup',
     title:'حدد وجهتك',
-    text:'اختر المحافظة، ثم المركز أو المدينة، وبعدها القرية أو المنطقة من القوائم.'
+    text:'اختر الوجهة من القوائم أو اضغط «حدد الوجهة على الخريطة». ويمكن استيراد لوكيشن مشترك من تطبيق مشوارك.'
   },
   {
     step:2,
@@ -6505,7 +6581,7 @@ const usageTourSteps=[
     step:2,
     target:'#rideAcSection',
     title:'اختر التكييف',
-    text:'حدد هل تريد سيارة بتكييف شغال أم بدون تكييف. التكييف يضيف 100 جنيه على السعر المبدئي.'
+    text:'حدد هل تريد سيارة بتكييف شغال أم بدون تكييف ليظهر تفضيلك ضمن تفاصيل الطلب.'
   },
   {
     step:2,
@@ -6787,7 +6863,7 @@ function updateRideConfirmSummaryV2(){
   if(date)meta+=' | '+date;
   if(time)meta+=' | '+time;
   if(waitingRequired)meta+=' | يوجد انتظار';
-  if(rideAcPreference==='WITH_AC')meta+=' | تكييف شغال +100 ج.م';
+  if(rideAcPreference==='WITH_AC')meta+=' | تكييف شغال';
   if(rideAcPreference==='WITHOUT_AC')meta+=' | بدون تكييف';
 
   if(m)m.textContent=meta;
@@ -7568,7 +7644,7 @@ function downloadRideReceipt(){
 
   receiptText(ctx,'مشوارك',990,85,58,'900','#FFFFFF','right');
   receiptText(ctx,'تم استلام طلب المشوار بنجاح',990,135,28,'800','#F4E9ED','right');
-  receiptText(ctx,'سيتم التواصل معك لتأكيد الرحلة والسعر النهائي',990,176,22,'600','#DCC8D0','right');
+  receiptText(ctx,'سيتم التواصل معك لتأكيد تفاصيل الرحلة والتنسيق',990,176,22,'600','#DCC8D0','right');
 
   rr(ctx,755,210,235,46,23,'rgba(255,255,255,.14)','rgba(255,255,255,.18)');
   receiptText(ctx,'رقم الطلب  '+(d.rideId||'—'),970,241,20,'900','#FFFFFF','right');
@@ -7586,7 +7662,7 @@ function downloadRideReceipt(){
   drawReceiptInfo(
     ctx,
     'الركاب والتكييف',
-    String(d.passengers||'—')+' راكب | '+(d.acPreference==='WITH_AC'?'تكييف شغال +100 ج.م':'بدون تكييف'),
+    String(d.passengers||'—')+' راكب | '+(d.acPreference==='WITH_AC'?'تكييف شغال':'بدون تكييف'),
     558,650,464
   );
   drawReceiptInfo(ctx,'الانتظار',d.waiting+(d.waitingDetails?' | '+d.waitingDetails:''),58,650,464);
@@ -7605,11 +7681,8 @@ function downloadRideReceipt(){
 
   // Price highlight
   rr(ctx,58,y,964,138,24,'#FFF7DD','#E6CB72');
-  receiptText(ctx,'السعر المبدئي',982,y+42,22,'900','#7B5C12','right');
-  const price=d.estimatedPrice
-    ? Number(d.estimatedPrice).toLocaleString('ar-EG')+' جنيه'
-    : 'يتم التأكيد هاتفيًا';
-  receiptText(ctx,price,982,y+96,38,'900','#4A3610','right');
+  receiptText(ctx,'تحديد الموقع',982,y+42,22,'900','#7B5C12','right');
+  receiptText(ctx,'تم حفظ تفاصيل نقطة الانطلاق والوجهة',982,y+96,25,'900','#4A3610','right');
   y+=158;
 
   // Important note
@@ -7617,7 +7690,7 @@ function downloadRideReceipt(){
   receiptText(ctx,'تنبيه مهم',982,y+35,20,'900','#8F1734','right');
   receiptWrap(
     ctx,
-    'السعر الظاهر مبدئي وليس تأكيدًا نهائيًا | يتم اعتماد الرحلة والسعر بعد التواصل معك.',
+    'سيتم التواصل معك لتأكيد تفاصيل الرحلة. التسعير التلقائي غير مفعل حاليًا.',
     982,y+71,880,27,20,'800','#6D4C56',2
   );
 
@@ -8025,9 +8098,9 @@ function openTermsModal(type){
   }else{
     title.textContent='شروط وإقرار طلب المشوار';
     body.innerHTML=
-      '<h4>صحة بيانات الطلب</h4><p>أقر بأن بيانات الرحلة والتواصل المقدمة صحيحة، وأوافق على تواصل إدارة مشوارك معي لتأكيد تفاصيل الرحلة والسعر.</p>'+
+      '<h4>صحة بيانات الطلب</h4><p>أقر بأن بيانات الرحلة والتواصل والموقع المقدمة صحيحة، وأوافق على تواصل إدارة مشوارك معي لتأكيد التفاصيل.</p>'+
       '<h4>السلوك والاستخدام</h4><p>يلتزم العميل والكابتن بالسلوك اللائق واحترام الطرف الآخر وعدم إساءة استخدام الخدمة.</p>'+
-      '<h4>السعر والتأكيد</h4><p>لا يعتبر الطلب مؤكدًا إلا بعد التواصل واعتماد تفاصيل الرحلة والسعر النهائي.</p>';
+      '<h4>تأكيد الطلب</h4><p>لا يعتبر الطلب مؤكدًا إلا بعد التواصل واعتماد تفاصيل الرحلة والتنسيق النهائي.</p>';
   }
   lockBackgroundScroll('modal');
   document.getElementById('mwTermsSheet').classList.add('active');
@@ -8766,9 +8839,9 @@ const FEATURE_INFO={
     text:'بعد تسجيل طلب المشوار بيتم التواصل معك لتأكيد التفاصيل في أسرع وقت ممكن، وعادةً فور مراجعة الطلب وبحد أقصى مستهدف نصف ساعة حسب ضغط الطلبات وتوفر الكباتن.'
   },
   price:{
-    icon:'🏷️',
-    title:'سعر واضح',
-    text:'الأسعار الظاهرة مبدئية وليست نهائية، ويتم تأكيد السعر هاتفيًا حسب تفاصيل الرحلة. وبنحاول نختار أقرب كابتن من محيط العميل لتقليل تكلفة التحرك وتسريع الوصول قدر الإمكان.'
+    icon:'📍',
+    title:'موقع أدق',
+    text:'تقدر تحدد نقطة الانطلاق والوجهة على الخريطة بدقة، مع حفظ الإحداثيات داخل الطلب لتسهيل التنسيق.'
   }
 };
 
@@ -8944,7 +9017,7 @@ function closeRideContactSheet(){
 
 
 function rideAcLabelV24(value){
-  if(value==='WITH_AC')return 'تكييف شغال | +100 ج.م';
+  if(value==='WITH_AC')return 'تكييف شغال';
   if(value==='WITHOUT_AC')return 'بدون تكييف';
   return '—'
 }
@@ -9119,6 +9192,14 @@ function submitRide(){
     tripType:tripType,
     from:document.getElementById('rideFrom').value,
     to:document.getElementById('rideTo').value,
+    fromLat:document.getElementById('rideFromLat').value,
+    fromLng:document.getElementById('rideFromLng').value,
+    fromMapUrl:document.getElementById('rideFromMapUrl').value,
+    fromMapLabel:document.getElementById('rideFromMapLabel').value,
+    toLat:document.getElementById('rideToLat').value,
+    toLng:document.getElementById('rideToLng').value,
+    toMapUrl:document.getElementById('rideToMapUrl').value,
+    toMapLabel:document.getElementById('rideToMapLabel').value,
     date:document.getElementById('rideDate').value,
     time:document.getElementById('rideTime').value,
     returnDate:document.getElementById('rideReturnDate').value,
@@ -9747,5 +9828,240 @@ document.addEventListener('DOMContentLoaded',function(){
 });
 </script>
 
+
+<script>
+/* =========================================================
+   MASHWARAK V2.5.0 | SMART LOCATION PHASE 1
+   - Lazy Leaflet/OpenStreetMap picker for FROM / TO.
+   - Exact lat/lng + map URL saved with ride.
+   - Can import coordinates from map links.
+   - Receives Android shared/opened locations by postMessage.
+   - No automatic price calculation in this phase.
+========================================================= */
+(function(){
+  const MW_MAP_DEFAULT=[30.55,30.90];
+  let mwMap=null,mwMapMarker=null,mwMapMode='TO',mwPendingPoint=null;
+  let mwLeafletPromise=null;
+
+  function num(v){const n=Number(v);return Number.isFinite(n)?n:null}
+  function fmt(v){return Number(v).toFixed(6)}
+  function mapUrl(lat,lng){return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(fmt(lat)+','+fmt(lng))}
+  function sidePrefix(mode){return mode==='FROM'?'rideFrom':'rideTo'}
+  function getExisting(mode){
+    const p=sidePrefix(mode),lat=num(document.getElementById(p+'Lat')?.value),lng=num(document.getElementById(p+'Lng')?.value);
+    return lat!==null&&lng!==null?{lat,lng}:null;
+  }
+  function setStatus(text,error){const el=document.getElementById('mwMapStatus');if(el){el.textContent=text;el.style.color=error?'#A51131':'#45505E'}}
+
+  function ensureLeaflet(){
+    if(window.L)return Promise.resolve(window.L);
+    if(mwLeafletPromise)return mwLeafletPromise;
+    mwLeafletPromise=new Promise(function(resolve,reject){
+      if(!document.querySelector('link[data-mw-leaflet]')){
+        const link=document.createElement('link');link.rel='stylesheet';link.dataset.mwLeaflet='1';
+        link.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';document.head.appendChild(link);
+      }
+      const sc=document.createElement('script');sc.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';sc.async=true;
+      sc.onload=function(){window.L?resolve(window.L):reject(new Error('Leaflet unavailable'))};
+      sc.onerror=function(){reject(new Error('تعذر تحميل الخريطة'))};document.head.appendChild(sc);
+    });
+    return mwLeafletPromise;
+  }
+
+  function placeMarker(lat,lng,pan){
+    lat=num(lat);lng=num(lng);if(lat===null||lng===null)return;
+    mwPendingPoint={lat:lat,lng:lng};
+    if(mwMap){
+      if(!mwMapMarker){
+        mwMapMarker=L.marker([lat,lng],{draggable:true}).addTo(mwMap);
+        mwMapMarker.on('dragend',function(e){const p=e.target.getLatLng();placeMarker(p.lat,p.lng,false)});
+      }else mwMapMarker.setLatLng([lat,lng]);
+      if(pan!==false)mwMap.setView([lat,lng],Math.max(mwMap.getZoom(),15));
+    }
+    setStatus('الموقع المحدد: '+fmt(lat)+', '+fmt(lng),false);
+  }
+
+  window.openMashwarakMapPicker=function(mode,initialPoint){
+    mwMapMode=String(mode||'TO').toUpperCase()==='FROM'?'FROM':'TO';
+    const modal=document.getElementById('mwMapPicker');
+    const title=document.getElementById('mwMapPickerTitle');
+    const label=document.getElementById('mwMapLabelInput');
+    if(title)title.textContent=mwMapMode==='FROM'?'حدد نقطة الانطلاق':'حدد الوجهة';
+    if(label)label.value=document.getElementById(sidePrefix(mwMapMode)+'MapLabel')?.value||'';
+    if(modal){modal.classList.add('active');modal.setAttribute('aria-hidden','false')}
+    document.documentElement.classList.add('mwMapOpen');document.body.classList.add('mwMapOpen');
+    setStatus('جاري تحميل الخريطة...',false);
+    ensureLeaflet().then(function(){
+      if(!mwMap){
+        mwMap=L.map('mwMapCanvas',{zoomControl:true}).setView(MW_MAP_DEFAULT,9);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+          maxZoom:19,attribution:'© OpenStreetMap'
+        }).addTo(mwMap);
+        mwMap.on('click',function(e){placeMarker(e.latlng.lat,e.latlng.lng,false)});
+      }
+      setTimeout(function(){mwMap.invalidateSize()},80);
+      const current=initialPoint||getExisting(mwMapMode);
+      if(current)placeMarker(current.lat,current.lng,true);
+      else {mwPendingPoint=null;setStatus('اضغط على الخريطة أو استخدم «موقعي الحالي».',false)}
+    }).catch(function(){setStatus('تعذر تحميل الخريطة. تحقق من الإنترنت وحاول مرة أخرى.',true)});
+  };
+
+  window.closeMashwarakMapPicker=function(){
+    const modal=document.getElementById('mwMapPicker');if(modal){modal.classList.remove('active');modal.setAttribute('aria-hidden','true')}
+    document.documentElement.classList.remove('mwMapOpen');document.body.classList.remove('mwMapOpen');
+    mwPendingPoint=null;
+  };
+
+  window.useMyCurrentLocationForMap=function(){
+    setStatus('جاري تحديد موقعك...',false);
+    try{
+      if(window.MashwarakLocation&&typeof window.MashwarakLocation.requestCurrentLocation==='function'){
+        window.MashwarakLocation.requestCurrentLocation();
+        return;
+      }
+    }catch(_){}
+    if(!navigator.geolocation){setStatus('تحديد الموقع غير مدعوم على هذا الجهاز.',true);return}
+    navigator.geolocation.getCurrentPosition(function(pos){
+      placeMarker(pos.coords.latitude,pos.coords.longitude,true);
+    },function(err){
+      const msg=err&&err.code===1?'اسمح لمشوارك باستخدام الموقع ثم حاول مرة أخرى.':'تعذر تحديد موقعك حاليًا.';
+      setStatus(msg,true);
+    },{enableHighAccuracy:true,timeout:12000,maximumAge:15000});
+  };
+
+  function extractCoords(text){
+    text=decodeURIComponent(String(text||'').replace(/\+/g,' '));
+    const pats=[
+      /(?:query|q|ll|destination)=\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/i,
+      /@\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/,
+      /geo:\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/i,
+      /(?:^|[^\d.-])(-?\d{1,2}\.\d{4,})\s*,\s*(-?\d{1,3}\.\d{4,})(?:[^\d.]|$)/
+    ];
+    for(const p of pats){const m=text.match(p);if(m){const lat=num(m[1]),lng=num(m[2]);if(lat!==null&&lng!==null&&Math.abs(lat)<=90&&Math.abs(lng)<=180)return{lat,lng}}}
+    return null;
+  }
+
+  window.pasteLocationLinkForMap=function(){
+    const raw=prompt('الصق رابط الموقع أو الإحداثيات هنا:');if(!raw)return;
+    const direct=extractCoords(raw);if(direct){placeMarker(direct.lat,direct.lng,true);return}
+    setStatus('جاري قراءة رابط الموقع...',false);
+    if(window.google&&google.script&&google.script.run){
+      google.script.run.withSuccessHandler(function(r){
+        if(r&&r.success&&r.lat!=null&&r.lng!=null)placeMarker(r.lat,r.lng,true);
+        else setStatus('لم نقدر نستخرج إحداثيات من الرابط. جرّب فتحه ثم مشاركة الموقع إلى تطبيق مشوارك.',true);
+      }).withFailureHandler(function(){setStatus('تعذر قراءة رابط الموقع.',true)}).resolveMashwarakMapLinkV530(raw);
+    }else setStatus('الرابط المختصر يحتاج فتحه من تطبيق مشوارك أو لصق الإحداثيات مباشرة.',true);
+  };
+
+  function setMapSelection(mode,lat,lng,label,source){
+    mode=mode==='FROM'?'FROM':'TO';lat=num(lat);lng=num(lng);if(lat===null||lng===null)return false;
+    const p=sidePrefix(mode),safeLabel=String(label||'').trim();
+    const coords=fmt(lat)+', '+fmt(lng);
+    const display=safeLabel?(safeLabel+' | '+coords):('موقع محدد على الخريطة ('+coords+')');
+    document.getElementById(p+'Lat').value=fmt(lat);
+    document.getElementById(p+'Lng').value=fmt(lng);
+    document.getElementById(p+'MapUrl').value=mapUrl(lat,lng);
+    document.getElementById(p+'MapLabel').value=safeLabel;
+    document.getElementById(mode==='FROM'?'rideFrom':'rideTo').value=display;
+    if(mode==='TO')document.getElementById('rideToDetail').value=display;
+    const choice=document.getElementById(p+'MapChoice');
+    if(choice){
+      choice.innerHTML='📍 <b>'+escapeMapHtml(display)+'</b><br><span>'+fmt(lat)+', '+fmt(lng)+'</span><button type="button" onclick="clearMashwarakMapLocation(\''+mode+'\')">إلغاء الموقع</button>';
+      choice.classList.add('show');
+    }
+    return true;
+  }
+
+  function escapeMapHtml(v){return String(v||'').replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+
+  window.confirmMashwarakMapLocation=function(){
+    if(!mwPendingPoint){setStatus('حدد نقطة على الخريطة أولًا.',true);return}
+    const label=document.getElementById('mwMapLabelInput')?.value||'';
+    setMapSelection(mwMapMode,mwPendingPoint.lat,mwPendingPoint.lng,label,'MAP');
+    closeMashwarakMapPicker();
+  };
+
+  window.clearMashwarakMapLocation=function(mode,keepManual){
+    mode=String(mode||'TO').toUpperCase()==='FROM'?'FROM':'TO';const p=sidePrefix(mode);
+    ['Lat','Lng','MapUrl','MapLabel'].forEach(function(s){const e=document.getElementById(p+s);if(e)e.value='' });
+    const choice=document.getElementById(p+'MapChoice');if(choice){choice.classList.remove('show');choice.innerHTML=''}
+    if(keepManual!==true){
+      if(mode==='FROM'){ if(window.__mwOriginalSyncRideFrom)window.__mwOriginalSyncRideFrom(); }
+      else { if(window.__mwOriginalSyncRideTo)window.__mwOriginalSyncRideTo(); }
+    }
+  };
+
+  window.__mwOriginalSyncRideFrom=window.syncRideFrom;
+  window.__mwOriginalSyncRideTo=window.syncRideTo;
+  window.syncRideFrom=function(){
+    const p=getExisting('FROM');if(p){
+      const label=document.getElementById('rideFromMapLabel').value.trim();
+      const coords=fmt(p.lat)+', '+fmt(p.lng);
+      document.getElementById('rideFrom').value=label?(label+' | '+coords):('موقع محدد على الخريطة ('+coords+')');return;
+    }
+    return window.__mwOriginalSyncRideFrom&&window.__mwOriginalSyncRideFrom();
+  };
+  window.syncRideTo=function(){
+    const p=getExisting('TO');if(p){
+      const label=document.getElementById('rideToMapLabel').value.trim();
+      const coords=fmt(p.lat)+', '+fmt(p.lng);
+      const display=label?(label+' | '+coords):('موقع محدد على الخريطة ('+coords+')');
+      document.getElementById('rideTo').value=display;document.getElementById('rideToDetail').value=display;return;
+    }
+    return window.__mwOriginalSyncRideTo&&window.__mwOriginalSyncRideTo();
+  };
+
+  const originalRouteNext=window.rideWizardNextFromRoute;
+  window.rideWizardNextFromRoute=function(){
+    const mapFrom=!!getExisting('FROM'),mapTo=!!getExisting('TO');
+    if(!mapFrom&&!mapTo)return originalRouteNext();
+    hideBox('rideError');syncRideFrom();syncRideTo();
+    const missing=[],from=document.getElementById('rideFrom').value.trim(),to=document.getElementById('rideTo').value.trim();
+    if(!from)missing.push('مكان الانطلاق');
+    if(!mapTo){
+      const gov=document.getElementById('rideToGovernorate').value,toCenter=document.getElementById('rideToCenter').value,toVillage=document.getElementById('rideToVillage').value,toOther=document.getElementById('rideToOther').value.trim();
+      if(!gov)missing.push('المحافظة / الوجهة');
+      if(gov&&gov!=='AIRPORT'&&!toCenter)missing.push('المركز / المدينة');
+      if(gov&&gov!=='AIRPORT'&&!toVillage)missing.push('القرية / المنطقة');
+      if(gov&&gov!=='AIRPORT'&&toVillage==='أخرى'&&!toOther)missing.push('كتابة القرية / المنطقة');
+    }
+    if(!to)missing.push('الوجهة');
+    if(missing.length){showBox('rideError','يرجى استكمال: '+missing.join(' | ')+'.');return}
+    rideWizardGo(2);
+  };
+
+  const originalReset=window.resetRideForm;
+  window.resetRideForm=function(keepIdentity){
+    const r=originalReset&&originalReset(keepIdentity);
+    clearMashwarakMapLocation('FROM',true);clearMashwarakMapLocation('TO',true);return r;
+  };
+
+  // Any manual dropdown edit intentionally replaces a previously selected map point.
+  document.addEventListener('DOMContentLoaded',function(){
+    ['rideFromCenter','rideFromVillage','rideFromOther'].forEach(function(id){const e=document.getElementById(id);if(e)e.addEventListener('change',function(){if(getExisting('FROM'))clearMashwarakMapLocation('FROM',true)})});
+    ['rideToGovernorate','rideToCenter','rideToVillage','rideToOther'].forEach(function(id){const e=document.getElementById(id);if(e)e.addEventListener('change',function(){if(getExisting('TO'))clearMashwarakMapLocation('TO',true)})});
+  });
+
+  function importDestination(data){
+    if(!data)return;const lat=num(data.lat),lng=num(data.lng);if(lat===null||lng===null)return;
+    const label=String(data.label||'').trim();
+    setMapSelection('TO',lat,lng,label,'ANDROID');
+    try{openScreen('customer');rideWizardGo(1);document.getElementById('rideToGroup')?.scrollIntoView({behavior:'smooth',block:'center'})}catch(_){ }
+  }
+
+  window.addEventListener('message',function(event){
+    const data=event.data||{};
+    if(data.type==='mashwarak-import-destination-location')importDestination(data);
+    if(data.type==='mashwarak-current-location-result'){
+      placeMarker(data.lat,data.lng,true);
+      const input=document.getElementById('mwMapLabelInput');
+      if(input&&!input.value)input.value=data.label||'موقعي الحالي';
+    }
+    if(data.type==='mashwarak-current-location-error'){
+      setStatus(data.message||'تعذر تحديد الموقع الحالي.',true);
+    }
+  });
+})();
+</script>
 </body>
 </html>
