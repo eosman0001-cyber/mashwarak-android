@@ -777,18 +777,24 @@ class MainActivity : AppCompatActivity() {
             }
 
             if (address != null) {
-                val label = listOfNotNull(
-                    address.thoroughfare,
-                    address.subLocality,
-                    address.locality,
-                    address.subAdminArea,
-                    address.adminArea
-                ).map { it.trim() }
-                    .filter { it.isNotBlank() }
-                    .distinct()
-                    .take(3)
+                fun cleanPart(value: String?): String {
+                    return value.orEmpty().trim()
+                        .replace(Regex("^[23456789CFGHJMPQRVWX]{4,8}\\+[23456789CFGHJMPQRVWX]{2,3}\\s*[,،-]?\\s*", RegexOption.IGNORE_CASE), "")
+                        .replace(Regex("\\b\\d{5}\\b"), "")
+                        .replace(Regex("\\s{2,}"), " ")
+                        .trim(' ', ',', '،', '-')
+                }
+                val label = listOf(
+                    cleanPart(address.thoroughfare),
+                    cleanPart(address.subLocality),
+                    cleanPart(address.locality),
+                    cleanPart(address.subAdminArea),
+                    cleanPart(address.adminArea)
+                ).filter { it.isNotBlank() && !Regex("^[23456789CFGHJMPQRVWX]{4,8}\\+[23456789CFGHJMPQRVWX]{2,3}$", RegexOption.IGNORE_CASE).matches(it) }
+                    .distinctBy { it.lowercase(Locale.ROOT) }
+                    .take(4)
                     .joinToString("، ")
-                    .ifBlank { address.getAddressLine(0)?.trim().orEmpty() }
+                    .ifBlank { cleanPart(address.getAddressLine(0)) }
 
                 if (label.isNotBlank()) {
                     runOnUiThread {

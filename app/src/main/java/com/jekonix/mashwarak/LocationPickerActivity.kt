@@ -607,14 +607,31 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
+    private fun looksLikePlusCode(value: String): Boolean {
+        val t = value.trim().uppercase(Locale.ROOT)
+        return Regex("^[23456789CFGHJMPQRVWX]{4,8}\\+[23456789CFGHJMPQRVWX]{2,3}(?:\\s.*)?$").matches(t)
+    }
+
+    private fun cleanAddressPart(value: String?): String {
+        var t = value.orEmpty().trim()
+        if (t.isBlank()) return ""
+        t = t.replace(Regex("^[23456789CFGHJMPQRVWX]{4,8}\\+[23456789CFGHJMPQRVWX]{2,3}\\s*[,،-]?\\s*", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\b\\d{5}\\b"), "")
+            .replace(Regex("\\s{2,}"), " ")
+            .trim(' ', ',', '،', '-')
+        if (looksLikePlusCode(t)) return ""
+        if (t.equals("Unnamed Road", true) || t.equals("طريق غير مسمى", true)) return ""
+        return t
+    }
+
     private fun compactLabel(raw: String): String {
         val unwanted = setOf("مصر", "egypt", "arab republic of egypt", "جمهورية مصر العربية")
         return raw.replace("؛", ",").replace("،", ",")
             .split(',')
-            .map { it.trim() }
+            .map { cleanAddressPart(it) }
             .filter { it.isNotBlank() && it.lowercase(Locale.ROOT) !in unwanted }
             .distinctBy { it.lowercase(Locale.ROOT) }
-            .take(3)
+            .take(4)
             .joinToString("، ")
     }
 
@@ -642,18 +659,33 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
     }
 
     private fun readableLabel(address: Address): String {
-        val parts = listOfNotNull(
-            address.featureName,
-            address.thoroughfare,
-            address.subLocality,
-            address.locality,
-            address.subAdminArea,
-            address.adminArea
-        ).map { it.trim() }
-            .filter { it.isNotBlank() && !it.matches(Regex("""^[0-9\-\s]+$""")) }
-            .distinctBy { it.lowercase(Locale.ROOT) }
-        val primary = parts.take(3).joinToString("، ")
-        return compactLabel(primary.ifBlank { address.getAddressLine(0)?.trim().orEmpty() })
+        val street = cleanAddressPart(address.thoroughfare)
+        val subStreet = cleanAddressPart(address.subThoroughfare)
+        val feature = cleanAddressPart(address.featureName)
+        val area = cleanAddressPart(address.subLocality)
+        val city = cleanAddressPart(address.locality)
+        val center = cleanAddressPart(address.subAdminArea)
+        val governorate = cleanAddressPart(address.adminArea)
+
+        val parts = mutableListOf<String>()
+        fun add(value: String) {
+            if (value.isBlank()) return
+            if (value.matches(Regex("""^[0-9\-\s]+$"""))) return
+            if (parts.none { it.equals(value, true) }) parts.add(value)
+        }
+
+        if (street.isNotBlank()) {
+            add(if (subStreet.isNotBlank() && !street.contains(subStreet, true)) "$street $subStreet" else street)
+        } else if (feature.isNotBlank() && !looksLikePlusCode(feature)) {
+            add(feature)
+        }
+        add(area)
+        add(city)
+        add(center)
+        add(governorate)
+
+        val primary = parts.take(4).joinToString("، ")
+        return compactLabel(primary.ifBlank { cleanAddressPart(address.getAddressLine(0)) })
     }
 
     private fun confirmSelection() {
