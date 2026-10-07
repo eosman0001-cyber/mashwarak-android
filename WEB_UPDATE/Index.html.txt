@@ -9831,16 +9831,17 @@ document.addEventListener('DOMContentLoaded',function(){
 
 <script>
 /* =========================================================
-   MASHWARAK V2.5.0 | SMART LOCATION PHASE 1
+   MASHWARAK V2.5.2 | SMART LOCATION AUTO AREA
    - Lazy Leaflet/OpenStreetMap picker for FROM / TO.
    - Exact lat/lng + map URL saved with ride.
    - Can import coordinates from map links.
    - Receives Android shared/opened locations by postMessage.
+   - Auto-fills governorate / center from native reverse-geocode when reliable.
    - No automatic price calculation in this phase.
 ========================================================= */
 (function(){
   const MW_MAP_DEFAULT=[30.55,30.90];
-  let mwMap=null,mwMapMarker=null,mwMapMode='TO',mwPendingPoint=null;
+  let mwMap=null,mwMapMarker=null,mwMapMode='TO',mwPendingPoint=null,mwPendingLocationMeta=null;
   let mwLeafletPromise=null;
 
   function num(v){const n=Number(v);return Number.isFinite(n)?n:null}
@@ -9852,6 +9853,78 @@ document.addEventListener('DOMContentLoaded',function(){
     return lat!==null&&lng!==null?{lat,lng}:null;
   }
   function setStatus(text,error){const el=document.getElementById('mwMapStatus');if(el){el.textContent=text;el.style.color=error?'#A51131':'#45505E'}}
+
+  function normArabicPlace(v){
+    return String(v||'').toLowerCase()
+      .replace(/محافظة/g,'').replace(/governorate/g,'')
+      .replace(/[أإآ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه')
+      .replace(/[ًٌٍَُِّْـ]/g,'').replace(/[^a-z0-9\u0600-\u06ff]+/g,' ').trim();
+  }
+
+  const MW_GOV_ALIASES={
+    'cairo':'القاهرة','al qahirah':'القاهرة','القاهره':'القاهرة',
+    'giza':'الجيزة','al jizah':'الجيزة','الجيزه':'الجيزة',
+    'alexandria':'الإسكندرية','al iskandariyah':'الإسكندرية','الاسكندريه':'الإسكندرية',
+    'dakahlia':'الدقهلية','daqahlia':'الدقهلية','الدقهليه':'الدقهلية',
+    'red sea':'البحر الأحمر','البحر الاحمر':'البحر الأحمر',
+    'beheira':'البحيرة','البحيره':'البحيرة','fayoum':'الفيوم','faiyum':'الفيوم',
+    'gharbia':'الغربية','gharbiyah':'الغربية','الغربيه':'الغربية',
+    'ismailia':'الإسماعيلية','الاسماعيليه':'الإسماعيلية',
+    'monufia':'المنوفية','menofia':'المنوفية','minufiya':'المنوفية','monufiya':'المنوفية','المنوفيه':'المنوفية',
+    'minya':'المنيا','qalyubia':'القليوبية','qaliubiya':'القليوبية','القليوبيه':'القليوبية',
+    'new valley':'الوادي الجديد','suez':'السويس','aswan':'أسوان','اسوان':'أسوان',
+    'asyut':'أسيوط','assiut':'أسيوط','اسيوط':'أسيوط','beni suef':'بني سويف','bani suwayf':'بني سويف',
+    'port said':'بورسعيد','damietta':'دمياط','sharqia':'الشرقية','sharqiyah':'الشرقية','الشرقيه':'الشرقية',
+    'south sinai':'جنوب سيناء','kafr el sheikh':'كفر الشيخ','kafr ash shaykh':'كفر الشيخ',
+    'matrouh':'مطروح','matruh':'مطروح','luxor':'الأقصر','الاقصر':'الأقصر','qena':'قنا',
+    'north sinai':'شمال سيناء','sohag':'سوهاج'
+  };
+
+  function matchSelectValue(select,candidates){
+    if(!select)return '';
+    const wanted=(candidates||[]).map(normArabicPlace).filter(Boolean); if(!wanted.length)return '';
+    const options=Array.from(select.options||[]).filter(function(o){return o.value&&o.value!=='AIRPORT'});
+    for(const o of options){const n=normArabicPlace(o.value);if(wanted.includes(n))return o.value;}
+    for(const o of options){const n=normArabicPlace(o.value);if(n&&wanted.some(function(w){return w.includes(n)||n.includes(w)}))return o.value;}
+    return '';
+  }
+
+  function resolveGovernorateName(raw){
+    const n=normArabicPlace(raw); if(!n)return '';
+    const direct=matchSelectValue(document.getElementById('rideToGovernorate'),[raw]); if(direct)return direct;
+    for(const key of Object.keys(MW_GOV_ALIASES)){const nk=normArabicPlace(key);if(n===nk||n.includes(nk)||nk.includes(n))return MW_GOV_ALIASES[key];}
+    return '';
+  }
+
+  function autoFillLocationSelectors(mode,data){
+    data=data||{}; mode=mode==='FROM'?'FROM':'TO';
+    const governorate=resolveGovernorateName(data.governorate||data.adminArea||'');
+    const centerCandidates=[data.center,data.subAdminArea,data.locality,data.city,data.district].filter(Boolean);
+    const areaCandidates=[data.area,data.subLocality,data.neighborhood].filter(Boolean);
+    if(mode==='TO'){
+      const govSel=document.getElementById('rideToGovernorate');
+      if(governorate&&govSel){
+        govSel.value=governorate;
+        if(govSel.value===governorate){
+          onToGovernorateChange();
+          const centerSel=document.getElementById('rideToCenter');
+          const matchedCenter=matchSelectValue(centerSel,centerCandidates);
+          if(matchedCenter){
+            centerSel.value=matchedCenter; onToCenterChange();
+            const villageSel=document.getElementById('rideToVillage');
+            const matchedArea=matchSelectValue(villageSel,areaCandidates);
+            if(matchedArea){villageSel.value=matchedArea;onToVillageChange();}
+          }
+        }
+      }
+      return;
+    }
+    if(!governorate||governorate==='المنوفية'){
+      const fromCenter=document.getElementById('rideFromCenter');
+      const matchedFrom=matchSelectValue(fromCenter,centerCandidates);
+      if(matchedFrom){fromCenter.value=matchedFrom;onFromCenterChange();}
+    }
+  }
 
   function ensureLeaflet(){
     if(window.L)return Promise.resolve(window.L);
@@ -9883,6 +9956,7 @@ document.addEventListener('DOMContentLoaded',function(){
 
   window.openMashwarakMapPicker=function(mode,initialPoint){
     mwMapMode=String(mode||'TO').toUpperCase()==='FROM'?'FROM':'TO';
+    mwPendingLocationMeta=null;
     const modal=document.getElementById('mwMapPicker');
     const title=document.getElementById('mwMapPickerTitle');
     const label=document.getElementById('mwMapLabelInput');
@@ -9894,22 +9968,38 @@ document.addEventListener('DOMContentLoaded',function(){
     ensureLeaflet().then(function(){
       if(!mwMap){
         mwMap=L.map('mwMapCanvas',{zoomControl:true}).setView(MW_MAP_DEFAULT,9);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-          maxZoom:19,attribution:'© OpenStreetMap'
+        const osmTiles=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{
+          maxZoom:19,
+          attribution:'© OpenStreetMap contributors',
+          crossOrigin:true
         }).addTo(mwMap);
+        let mwTileErrors=0;
+        osmTiles.on('tileload',function(){mwTileErrors=0});
+        osmTiles.on('tileerror',function(){
+          mwTileErrors++;
+          if(mwTileErrors===3)setStatus('الخريطة لم تكتمل بعد. تحقق من الاتصال ثم افتحها مرة أخرى.',true);
+        });
         mwMap.on('click',function(e){placeMarker(e.latlng.lat,e.latlng.lng,false)});
       }
       setTimeout(function(){mwMap.invalidateSize()},80);
       const current=initialPoint||getExisting(mwMapMode);
       if(current)placeMarker(current.lat,current.lng,true);
-      else {mwPendingPoint=null;setStatus('اضغط على الخريطة أو استخدم «موقعي الحالي».',false)}
+      else {
+        mwPendingPoint=null;
+        if(mwMapMode==='FROM'&&window.MashwarakLocation&&typeof window.MashwarakLocation.requestCurrentLocation==='function'){
+          setStatus('جاري تحديد موقعك الحالي...',false);
+          setTimeout(function(){try{window.MashwarakLocation.requestCurrentLocation()}catch(_){ }},120);
+        }else{
+          setStatus('استخدم «موقعي الحالي» أو اضغط على الخريطة لتحديد النقطة.',false);
+        }
+      }
     }).catch(function(){setStatus('تعذر تحميل الخريطة. تحقق من الإنترنت وحاول مرة أخرى.',true)});
   };
 
   window.closeMashwarakMapPicker=function(){
     const modal=document.getElementById('mwMapPicker');if(modal){modal.classList.remove('active');modal.setAttribute('aria-hidden','true')}
     document.documentElement.classList.remove('mwMapOpen');document.body.classList.remove('mwMapOpen');
-    mwPendingPoint=null;
+    mwPendingPoint=null;mwPendingLocationMeta=null;
   };
 
   window.useMyCurrentLocationForMap=function(){
@@ -9957,7 +10047,7 @@ document.addEventListener('DOMContentLoaded',function(){
     mode=mode==='FROM'?'FROM':'TO';lat=num(lat);lng=num(lng);if(lat===null||lng===null)return false;
     const p=sidePrefix(mode),safeLabel=String(label||'').trim();
     const coords=fmt(lat)+', '+fmt(lng);
-    const display=safeLabel?(safeLabel+' | '+coords):('موقع محدد على الخريطة ('+coords+')');
+    const display=safeLabel||'موقع محدد على الخريطة';
     document.getElementById(p+'Lat').value=fmt(lat);
     document.getElementById(p+'Lng').value=fmt(lng);
     document.getElementById(p+'MapUrl').value=mapUrl(lat,lng);
@@ -9966,7 +10056,7 @@ document.addEventListener('DOMContentLoaded',function(){
     if(mode==='TO')document.getElementById('rideToDetail').value=display;
     const choice=document.getElementById(p+'MapChoice');
     if(choice){
-      choice.innerHTML='📍 <b>'+escapeMapHtml(display)+'</b><br><span>'+fmt(lat)+', '+fmt(lng)+'</span><button type="button" onclick="clearMashwarakMapLocation(\''+mode+'\')">إلغاء الموقع</button>';
+      choice.innerHTML='📍 <b>'+escapeMapHtml(display)+'</b><br><span>تم حفظ الموقع الدقيق على الخريطة</span><button type="button" onclick="clearMashwarakMapLocation(\''+mode+'\')">إلغاء الموقع</button>';
       choice.classList.add('show');
     }
     return true;
@@ -9977,6 +10067,7 @@ document.addEventListener('DOMContentLoaded',function(){
   window.confirmMashwarakMapLocation=function(){
     if(!mwPendingPoint){setStatus('حدد نقطة على الخريطة أولًا.',true);return}
     const label=document.getElementById('mwMapLabelInput')?.value||'';
+    if(mwPendingLocationMeta)autoFillLocationSelectors(mwMapMode,mwPendingLocationMeta);
     setMapSelection(mwMapMode,mwPendingPoint.lat,mwPendingPoint.lng,label,'MAP');
     closeMashwarakMapPicker();
   };
@@ -9996,16 +10087,14 @@ document.addEventListener('DOMContentLoaded',function(){
   window.syncRideFrom=function(){
     const p=getExisting('FROM');if(p){
       const label=document.getElementById('rideFromMapLabel').value.trim();
-      const coords=fmt(p.lat)+', '+fmt(p.lng);
-      document.getElementById('rideFrom').value=label?(label+' | '+coords):('موقع محدد على الخريطة ('+coords+')');return;
+      document.getElementById('rideFrom').value=label||'موقع محدد على الخريطة';return;
     }
     return window.__mwOriginalSyncRideFrom&&window.__mwOriginalSyncRideFrom();
   };
   window.syncRideTo=function(){
     const p=getExisting('TO');if(p){
       const label=document.getElementById('rideToMapLabel').value.trim();
-      const coords=fmt(p.lat)+', '+fmt(p.lng);
-      const display=label?(label+' | '+coords):('موقع محدد على الخريطة ('+coords+')');
+      const display=label||'موقع محدد على الخريطة';
       document.getElementById('rideTo').value=display;document.getElementById('rideToDetail').value=display;return;
     }
     return window.__mwOriginalSyncRideTo&&window.__mwOriginalSyncRideTo();
@@ -10045,6 +10134,7 @@ document.addEventListener('DOMContentLoaded',function(){
   function importDestination(data){
     if(!data)return;const lat=num(data.lat),lng=num(data.lng);if(lat===null||lng===null)return;
     const label=String(data.label||'').trim();
+    autoFillLocationSelectors('TO',data);
     setMapSelection('TO',lat,lng,label,'ANDROID');
     try{openScreen('customer');rideWizardGo(1);document.getElementById('rideToGroup')?.scrollIntoView({behavior:'smooth',block:'center'})}catch(_){ }
   }
@@ -10054,8 +10144,13 @@ document.addEventListener('DOMContentLoaded',function(){
     if(data.type==='mashwarak-import-destination-location')importDestination(data);
     if(data.type==='mashwarak-current-location-result'){
       placeMarker(data.lat,data.lng,true);
+      if(data.governorate||data.adminArea||data.center||data.subAdminArea||data.locality){
+        mwPendingLocationMeta={governorate:data.governorate||data.adminArea||'',adminArea:data.adminArea||'',center:data.center||'',subAdminArea:data.subAdminArea||'',locality:data.locality||'',area:data.area||'',subLocality:data.subLocality||''};
+      }
       const input=document.getElementById('mwMapLabelInput');
-      if(input&&!input.value)input.value=data.label||'موقعي الحالي';
+      const readable=String(data.label||'').trim()||'موقعي الحالي';
+      if(input&&(readable!=='موقعي الحالي'||!input.value))input.value=readable;
+      setStatus(readable==='موقعي الحالي'?'تم تحديد موقعك بدقة.':'تم تحديد موقعك: '+readable,false);
     }
     if(data.type==='mashwarak-current-location-error'){
       setStatus(data.message||'تعذر تحديد الموقع الحالي.',true);

@@ -12,8 +12,8 @@ if (cfgFile.exists()) cfgFile.inputStream().use { cfg.load(it) }
 fun cfg(name: String, fallback: String = "") =
     (cfg.getProperty(name) ?: fallback).replace("\\", "\\\\").replace("\"", "\\\"")
 
-val releaseVersionName = System.getenv("MASHWARAK_VERSION_NAME")?.trim().orEmpty().ifBlank { "1.12.0" }
-val releaseVersionCode = System.getenv("MASHWARAK_VERSION_CODE")?.trim()?.toIntOrNull() ?: 25
+val releaseVersionName = System.getenv("MASHWARAK_VERSION_NAME")?.trim().orEmpty().ifBlank { "1.12.1" }
+val releaseVersionCode = System.getenv("MASHWARAK_VERSION_CODE")?.trim()?.toIntOrNull() ?: 26
 
 android {
     signingConfigs {
@@ -73,4 +73,5 @@ dependencies {
     implementation("androidx.camera:camera-view:1.4.1")
     implementation("com.google.firebase:firebase-messaging:24.1.0")
     implementation("com.google.firebase:firebase-common:21.0.0")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
 }

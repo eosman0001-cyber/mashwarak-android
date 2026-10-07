@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.ContentValues
 import android.media.MediaScannerConnection
 import android.location.Location
+import android.location.Geocoder
 import android.location.LocationManager
 import android.os.Environment
 import android.os.Handler
@@ -24,6 +25,7 @@ import java.net.URL
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
+import java.util.Locale
 import org.json.JSONObject
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -50,6 +52,9 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
 
@@ -69,7 +74,7 @@ class MainActivity : AppCompatActivity() {
     private var openNotificationsAfterLoad = false
     private var nativeBackRequestInFlight = false
 
-    // V1.12.0 | Smart Location
+    // V1.12.2 | Smart Location - fast GPS + structured area metadata
     private data class SharedLocation(val lat: Double, val lng: Double, val label: String = "")
     private var pendingSharedDestination: SharedLocation? = null
     private var pendingGeoOrigin: String? = null
@@ -600,40 +605,64 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("MissingPermission")
     private fun requestNativeCurrentLocationNow() {
+        val fused = LocationServices.getFusedLocationProviderClient(this)
+        val timeoutHandler = Handler(Looper.getMainLooper())
+        var finished = false
+        var cached: Location? = null
+        val cancellation = CancellationTokenSource()
+
+        fun finish(location: Location?) {
+            if (finished) return
+            finished = true
+            cancellation.cancel()
+            timeoutHandler.removeCallbacksAndMessages(null)
+            if (location != null) {
+                broadcastNativeCurrentLocation(location)
+                reverseGeocodeAndBroadcast(location)
+            } else {
+                fallbackLocationManager()
+            }
+        }
+
+        fused.lastLocation
+            .addOnSuccessListener { last ->
+                cached = last
+                if (last != null) {
+                    val age = System.currentTimeMillis() - last.time
+                    if (age in 0..120_000L && last.accuracy <= 120f) {
+                        finish(last)
+                        return@addOnSuccessListener
+                    }
+                }
+
+                timeoutHandler.postDelayed({ finish(cached) }, 7_000L)
+                fused.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cancellation.token)
+                    .addOnSuccessListener { fresh -> finish(fresh ?: cached) }
+                    .addOnFailureListener { finish(cached) }
+            }
+            .addOnFailureListener {
+                fallbackLocationManager()
+            }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun fallbackLocationManager() {
         val manager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+        val providers = listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
             .filter { provider ->
                 try { manager.isProviderEnabled(provider) } catch (_: Exception) { false }
             }
-
         var best: Location? = null
         for (provider in providers) {
             val loc = try { manager.getLastKnownLocation(provider) } catch (_: Exception) { null }
             if (loc != null && (best == null || loc.time > (best?.time ?: 0L))) best = loc
         }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && providers.isNotEmpty()) {
-            val provider = if (providers.contains(LocationManager.GPS_PROVIDER)) {
-                LocationManager.GPS_PROVIDER
-            } else providers.first()
-            try {
-                manager.getCurrentLocation(
-                    provider,
-                    null,
-                    ContextCompat.getMainExecutor(this)
-                ) { fresh ->
-                    val chosen = fresh ?: best
-                    if (chosen != null) broadcastNativeCurrentLocation(chosen)
-                    else broadcastNativeLocationError("تعذر تحديد الموقع الحالي")
-                }
-                return
-            } catch (_: Exception) {
-                // Fall through to the best cached location.
-            }
+        if (best != null) {
+            broadcastNativeCurrentLocation(best!!)
+            reverseGeocodeAndBroadcast(best!!)
+        } else {
+            broadcastNativeLocationError("شغّل GPS وحاول مرة أخرى")
         }
-
-        if (best != null) broadcastNativeCurrentLocation(best!!)
-        else broadcastNativeLocationError("شغّل GPS وحاول مرة أخرى")
     }
 
     private fun broadcastNativeCurrentLocation(location: Location) {
@@ -643,6 +672,49 @@ class MainActivity : AppCompatActivity() {
             lng = location.longitude,
             label = "موقعي الحالي"
         )
+    }
+
+    @Suppress("DEPRECATION")
+    private fun reverseGeocodeAndBroadcast(location: Location) {
+        locationExecutor.execute {
+            val address = try {
+                Geocoder(this, Locale("ar", "EG"))
+                    .getFromLocation(location.latitude, location.longitude, 1)
+                    ?.firstOrNull()
+            } catch (_: Exception) {
+                null
+            }
+
+            if (address != null) {
+                val label = listOfNotNull(
+                    address.thoroughfare,
+                    address.subLocality,
+                    address.locality,
+                    address.subAdminArea,
+                    address.adminArea
+                ).map { it.trim() }
+                    .filter { it.isNotBlank() }
+                    .distinct()
+                    .take(3)
+                    .joinToString("، ")
+                    .ifBlank { address.getAddressLine(0)?.trim().orEmpty() }
+
+                if (label.isNotBlank()) {
+                    runOnUiThread {
+                        broadcastLocationMessage(
+                            type = "mashwarak-current-location-result",
+                            lat = location.latitude,
+                            lng = location.longitude,
+                            label = label,
+                            governorate = address.adminArea.orEmpty(),
+                            center = address.subAdminArea.orEmpty(),
+                            locality = address.locality.orEmpty(),
+                            subLocality = address.subLocality.orEmpty()
+                        )
+                    }
+                }
+            }
+        }
     }
 
     private fun broadcastNativeLocationError(message: String) {
@@ -666,14 +738,32 @@ class MainActivity : AppCompatActivity() {
         webView.evaluateJavascript(js, null)
     }
 
-    private fun broadcastLocationMessage(type: String, lat: Double, lng: Double, label: String) {
+    private fun broadcastLocationMessage(
+        type: String,
+        lat: Double,
+        lng: Double,
+        label: String,
+        governorate: String = "",
+        center: String = "",
+        locality: String = "",
+        subLocality: String = ""
+    ) {
         if (!::webView.isInitialized) return
         val typeJson = JSONObject.quote(type)
         val labelJson = JSONObject.quote(label)
+        val governorateJson = JSONObject.quote(governorate)
+        val centerJson = JSONObject.quote(center)
+        val localityJson = JSONObject.quote(locality)
+        val subLocalityJson = JSONObject.quote(subLocality)
         val js = """
             (function(){
               try{
-                var message={type:$typeJson,lat:$lat,lng:$lng,label:$labelJson};
+                var message={
+                  type:$typeJson,lat:$lat,lng:$lng,label:$labelJson,
+                  governorate:$governorateJson,adminArea:$governorateJson,
+                  center:$centerJson,subAdminArea:$centerJson,
+                  locality:$localityJson,subLocality:$subLocalityJson,area:$subLocalityJson
+                };
                 var seen=[];
                 function walk(w,d){
                   if(!w||d>12||seen.indexOf(w)>=0)return;
