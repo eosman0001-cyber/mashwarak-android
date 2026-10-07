@@ -18,12 +18,9 @@ import android.location.LocationManager
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.EditorInfo
-import android.text.Editable
-import android.text.TextWatcher
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -40,13 +37,6 @@ import com.google.android.gms.maps.MapView
 import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.tasks.CancellationTokenSource
-import com.google.android.libraries.places.api.Places
-import com.google.android.libraries.places.api.model.AutocompletePrediction
-import com.google.android.libraries.places.api.model.AutocompleteSessionToken
-import com.google.android.libraries.places.api.model.Place
-import com.google.android.libraries.places.api.net.FetchPlaceRequest
-import com.google.android.libraries.places.api.net.FindAutocompletePredictionsRequest
-import com.google.android.libraries.places.api.net.PlacesClient
 import java.util.Locale
 import java.util.concurrent.Executors
 
@@ -59,14 +49,8 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
     private lateinit var statusText: TextView
     private lateinit var confirmButton: TextView
     private lateinit var centerPin: TextView
-    private lateinit var suggestionsCard: LinearLayout
-    private lateinit var suggestionsList: LinearLayout
 
     private var map: GoogleMap? = null
-    private var placesClient: PlacesClient? = null
-    private var autocompleteSessionToken: AutocompleteSessionToken = AutocompleteSessionToken.newInstance()
-    private var autocompleteRunnable: Runnable? = null
-    private var suppressAutocomplete = false
     private var mode: String = "TO"
     private var initialLat: Double? = null
     private var initialLng: Double? = null
@@ -99,8 +83,6 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = Color.WHITE
         window.navigationBarColor = Color.WHITE
-
-        initPlaces()
 
         root = FrameLayout(this).apply { setBackgroundColor(Color.WHITE) }
         buildUi(savedInstanceState)
@@ -157,24 +139,13 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
             background = rounded(Color.rgb(248, 249, 251), 14f, Color.rgb(210, 215, 223))
             setOnEditorActionListener { _, actionId, _ ->
                 if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                    requestAutocomplete(text?.toString()?.trim().orEmpty(), immediate = true)
+                    searchLocation()
                     true
                 } else false
             }
-            addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                    if (suppressAutocomplete) return
-                    requestAutocomplete(s?.toString()?.trim().orEmpty(), immediate = false)
-                }
-                override fun afterTextChanged(s: Editable?) = Unit
-            })
-            setOnFocusChangeListener { _, hasFocus ->
-                if (!hasFocus) mainHandler.postDelayed({ hideSuggestions() }, 180L)
-            }
         }
         val searchBtn = button("بحث", Color.rgb(20, 73, 132), Color.WHITE).apply {
-            setOnClickListener { requestAutocomplete(searchInput.text?.toString()?.trim().orEmpty(), immediate = true) }
+            setOnClickListener { searchLocation() }
         }
         searchRow.addView(searchInput, LinearLayout.LayoutParams(0, dp(52), 1f).apply { marginEnd = dp(8) })
         searchRow.addView(searchBtn, LinearLayout.LayoutParams(dp(82), dp(52)))
@@ -185,29 +156,6 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
             FrameLayout.LayoutParams(-1, dp(120)).apply {
                 gravity = Gravity.TOP
                 setMargins(dp(14), dp(12), dp(14), 0)
-            }
-        )
-
-        suggestionsList = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(6), dp(5), dp(6), dp(5))
-        }
-        val suggestionsScroll = ScrollView(this).apply {
-            isFillViewport = false
-            addView(suggestionsList, ScrollView.LayoutParams(-1, -2))
-        }
-        suggestionsCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = rounded(Color.WHITE, 18f, Color.rgb(224, 228, 235))
-            elevation = dp(12).toFloat()
-            visibility = View.GONE
-            addView(suggestionsScroll, LinearLayout.LayoutParams(-1, -1))
-        }
-        root.addView(
-            suggestionsCard,
-            FrameLayout.LayoutParams(-1, dp(286)).apply {
-                gravity = Gravity.TOP
-                setMargins(dp(14), dp(126), dp(14), 0)
             }
         )
 
@@ -450,145 +398,13 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
         })
     }
 
-    private fun initPlaces() {
-        try {
-            val key = BuildConfig.MAPS_API_KEY.trim()
-            if (key.isBlank() || key == "MISSING_MAPS_API_KEY") return
-            if (!Places.isInitialized()) {
-                Places.initializeWithNewPlacesApiEnabled(applicationContext, key, Locale("ar", "EG"))
-            }
-            placesClient = Places.createClient(this)
-        } catch (_: Exception) {
-            placesClient = null
-        }
-    }
-
-    private fun requestAutocomplete(query: String, immediate: Boolean) {
-        autocompleteRunnable?.let { mainHandler.removeCallbacks(it) }
-        if (query.length < 2) {
-            hideSuggestions()
-            return
-        }
-        val run = Runnable { performAutocomplete(query) }
-        autocompleteRunnable = run
-        if (immediate) run.run() else mainHandler.postDelayed(run, 260L)
-    }
-
-    private fun performAutocomplete(query: String) {
-        val client = placesClient
-        if (client == null) {
-            searchLocationWithGeocoder(query)
-            return
-        }
-        setStatus("جاري البحث عن اقتراحات...", false)
-        val request = FindAutocompletePredictionsRequest.builder()
-            .setQuery(query)
-            .setCountries(listOf("EG"))
-            .setRegionCode("EG")
-            .setSessionToken(autocompleteSessionToken)
-            .build()
-
-        client.findAutocompletePredictions(request)
-            .addOnSuccessListener { response ->
-                val predictions = response.autocompletePredictions
-                if (predictions.isEmpty()) {
-                    hideSuggestions()
-                    setStatus("لم نجد اقتراحات مطابقة. جرّب اسمًا أو عنوانًا أوضح.", true)
-                } else {
-                    renderSuggestions(predictions.take(5))
-                    setStatus("اختر المكان الصحيح من الاقتراحات.", false)
-                }
-            }
-            .addOnFailureListener {
-                hideSuggestions()
-                searchLocationWithGeocoder(query)
-            }
-    }
-
-    private fun renderSuggestions(predictions: List<AutocompletePrediction>) {
-        suggestionsList.removeAllViews()
-        predictions.forEachIndexed { index, prediction ->
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(14), dp(9), dp(14), dp(9))
-                background = rounded(
-                    if (index == 0) Color.rgb(255, 250, 242) else Color.WHITE,
-                    12f,
-                    if (index == 0) Color.rgb(226, 196, 126) else Color.rgb(237, 239, 243)
-                )
-                isClickable = true
-                isFocusable = true
-                setOnClickListener { selectPrediction(prediction) }
-            }
-            val primary = TextView(this).apply {
-                text = prediction.getPrimaryText(null).toString()
-                textSize = 14f
-                setTextColor(Color.rgb(49, 35, 42))
-                setTypeface(Typeface.DEFAULT, Typeface.BOLD)
-                maxLines = 1
-            }
-            val secondary = TextView(this).apply {
-                text = compactLabel(prediction.getSecondaryText(null).toString())
-                textSize = 11f
-                setTextColor(Color.rgb(103, 104, 112))
-                maxLines = 1
-            }
-            row.addView(primary, LinearLayout.LayoutParams(-1, dp(24)))
-            if (secondary.text.isNotBlank()) row.addView(secondary, LinearLayout.LayoutParams(-1, dp(22)))
-            row.minimumHeight = dp(60)
-            suggestionsList.addView(row, LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                if (index > 0) topMargin = dp(5)
-            })
-        }
-        suggestionsCard.visibility = View.VISIBLE
-        suggestionsCard.bringToFront()
-    }
-
-    private fun hideSuggestions() {
-        if (::suggestionsCard.isInitialized) suggestionsCard.visibility = View.GONE
-    }
-
-    private fun selectPrediction(prediction: AutocompletePrediction) {
-        val client = placesClient ?: return searchLocationWithGeocoder(prediction.getFullText(null).toString())
-        hideSuggestions()
-        setStatus("جاري فتح المكان...", false)
-        val fields = listOf(Place.Field.LOCATION, Place.Field.FORMATTED_ADDRESS)
-        val request = FetchPlaceRequest.builder(prediction.placeId, fields)
-            .setSessionToken(autocompleteSessionToken)
-            .setRegionCode("EG")
-            .build()
-        client.fetchPlace(request)
-            .addOnSuccessListener { response ->
-                val point = response.place.location
-                if (point == null) {
-                    searchLocationWithGeocoder(prediction.getFullText(null).toString())
-                    return@addOnSuccessListener
-                }
-                val full = prediction.getFullText(null).toString()
-                val formatted = response.place.formattedAddress.orEmpty()
-                val label = compactLabel(full.ifBlank { formatted })
-                suppressAutocomplete = true
-                searchInput.setText(prediction.getPrimaryText(null).toString())
-                searchInput.setSelection(searchInput.text.length)
-                suppressAutocomplete = false
-                addressText.text = label.ifBlank { "موقع محدد على الخريطة" }
-                autocompleteSessionToken = AutocompleteSessionToken.newInstance()
-                selectedAddress = null
-                moveCameraTo(point, 17f)
-            }
-            .addOnFailureListener {
-                searchLocationWithGeocoder(prediction.getFullText(null).toString())
-            }
-    }
-
     @Suppress("DEPRECATION")
-    private fun searchLocationWithGeocoder(query: String) {
+    private fun searchLocation() {
+        val query = searchInput.text?.toString()?.trim().orEmpty()
         if (query.isBlank()) {
             Toast.makeText(this, "اكتب اسم المكان أو العنوان أولًا", Toast.LENGTH_SHORT).show()
             return
         }
-        hideSuggestions()
         setStatus("جاري البحث...", false)
         executor.execute {
             val address = try {
@@ -600,22 +416,11 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
                 } else {
                     selectedAddress = address
                     val point = LatLng(address.latitude, address.longitude)
-                    addressText.text = readableLabel(address).ifBlank { compactLabel(query) }
+                    addressText.text = readableLabel(address).ifBlank { query }
                     moveCameraTo(point, 17f)
                 }
             }
         }
-    }
-
-    private fun compactLabel(raw: String): String {
-        val unwanted = setOf("مصر", "egypt", "arab republic of egypt", "جمهورية مصر العربية")
-        return raw.replace("؛", ",").replace("،", ",")
-            .split(',')
-            .map { it.trim() }
-            .filter { it.isNotBlank() && it.lowercase(Locale.ROOT) !in unwanted }
-            .distinctBy { it.lowercase(Locale.ROOT) }
-            .take(3)
-            .joinToString("، ")
     }
 
     @Suppress("DEPRECATION")
@@ -642,18 +447,15 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
     }
 
     private fun readableLabel(address: Address): String {
-        val parts = listOfNotNull(
+        val primary = listOfNotNull(
             address.featureName,
             address.thoroughfare,
             address.subLocality,
             address.locality,
             address.subAdminArea,
             address.adminArea
-        ).map { it.trim() }
-            .filter { it.isNotBlank() && !it.matches(Regex("""^[0-9\-\s]+$""")) }
-            .distinctBy { it.lowercase(Locale.ROOT) }
-        val primary = parts.take(3).joinToString("، ")
-        return compactLabel(primary.ifBlank { address.getAddressLine(0)?.trim().orEmpty() })
+        ).map { it.trim() }.filter { it.isNotBlank() }.distinct().take(4).joinToString("، ")
+        return primary.ifBlank { address.getAddressLine(0)?.trim().orEmpty() }
     }
 
     private fun confirmSelection() {

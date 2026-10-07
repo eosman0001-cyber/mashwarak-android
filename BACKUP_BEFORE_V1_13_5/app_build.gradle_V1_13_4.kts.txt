@@ -12,8 +12,8 @@ if (cfgFile.exists()) cfgFile.inputStream().use { cfg.load(it) }
 fun cfg(name: String, fallback: String = "") =
     (cfg.getProperty(name) ?: fallback).replace("\\", "\\\\").replace("\"", "\\\"")
 
-val releaseVersionName = System.getenv("MASHWARAK_VERSION_NAME")?.trim().orEmpty().ifBlank { "1.13.5" }
-val releaseVersionCode = System.getenv("MASHWARAK_VERSION_CODE")?.trim()?.toIntOrNull() ?: 1013005
+val releaseVersionName = System.getenv("MASHWARAK_VERSION_NAME")?.trim().orEmpty().ifBlank { "1.13.4" }
+val releaseVersionCode = System.getenv("MASHWARAK_VERSION_CODE")?.trim()?.toIntOrNull() ?: 1013004
 
 android {
     signingConfigs {
@@ -50,11 +50,7 @@ android {
         val mapsApiKey = System.getenv("MASHWARAK_MAPS_API_KEY")?.trim().orEmpty().ifBlank {
             (cfg.getProperty("GOOGLE_MAPS_API_KEY") ?: "").trim()
         }
-        val finalMapsApiKey = mapsApiKey.ifBlank { "MISSING_MAPS_API_KEY" }
-        manifestPlaceholders["MAPS_API_KEY"] = finalMapsApiKey
-        // Reuse the same Android-restricted key for Places API (New).
-        // The key is injected by GitHub Actions and is never committed to source.
-        buildConfigField("String", "MAPS_API_KEY", "\"${finalMapsApiKey}\"")
+        manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey.ifBlank { "MISSING_MAPS_API_KEY" }
     }
 
     buildFeatures { buildConfig = true }
@@ -86,5 +82,4 @@ dependencies {
     implementation("com.google.firebase:firebase-common:21.0.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("com.google.android.gms:play-services-maps:20.0.0")
-    implementation("com.google.android.libraries.places:places:5.1.1")
 }

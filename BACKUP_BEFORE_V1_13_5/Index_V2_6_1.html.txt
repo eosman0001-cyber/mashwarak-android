@@ -5286,13 +5286,8 @@ html.mwNativeAndroid #mwContactSheet .mwSheetActions{
 .mwMapPickBtnGold{background:#FFF9E7;border-color:#E6CC78;color:#694A05}
 .mwMapPickBtn span{font-size:16px;flex:0 0 auto}
 .mwMapPickBtn b{font-size:12px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#rideFromGroup.mwExactMapSelected #rideFromCenter,
-#rideFromGroup.mwExactMapSelected #fromAirportChosen,
 #rideFromGroup.mwExactMapSelected #fromVillageWrap,
 #rideFromGroup.mwExactMapSelected #fromOtherWrap,
-#rideToGroup.mwExactMapSelected #rideToGovernorate,
-#rideToGroup.mwExactMapSelected #toAirportChosen,
-#rideToGroup.mwExactMapSelected #toCenterWrap,
 #rideToGroup.mwExactMapSelected #toVillageWrap,
 #rideToGroup.mwExactMapSelected #toOtherWrap{display:none!important}
 @media (max-width:360px){.mwMapPickBtn b{font-size:11px}.mwMapPickBtn{gap:5px;padding-inline:7px}}
@@ -5317,124 +5312,32 @@ html.mwMapOpen,body.mwMapOpen{overflow:hidden!important}
 #rideEstimateCard,.mwRideDonePrice{display:none!important}
 button[onclick*="openScreen('priceList')"],button[onclick*="drawerGo('priceList')"]{display:none!important}
 @media (min-width:760px){.mwMapPicker{align-items:center;padding:24px}.mwMapPickerPanel{border-radius:24px;height:min(86vh,760px)}}
-
-
-/* =========================================================
-   V2.6.2 | PREMIUM ENTRY HUB + CLEAN EXACT LOCATION CARDS
-========================================================= */
-#screenCustomer.mwHomeMode .mwPromoHero,
-#screenCustomer.mwHomeMode #mwBooking,
-#screenCustomer.mwHomeMode .mwRideHomeBar,
-#screenCustomer.mwHomeMode .mwDriver,
-#screenCustomer.mwHomeMode .mwFeatures,
-#screenCustomer.mwHomeMode .mwCredit{display:none!important}
-#screenCustomer.mwRideMode #mwEntryHub,
-#screenCustomer.mwRideMode .mwPromoHero,
-#screenCustomer.mwRideMode .mwDriver,
-#screenCustomer.mwRideMode .mwFeatures,
-#screenCustomer.mwRideMode .mwCredit{display:none!important}
-#screenCustomer.mwRideMode #mwBooking{display:block!important}
-#screenCustomer.mwRideMode .mwRideHomeBar{display:flex!important}
-
-.mwEntryHub{
-  position:relative;overflow:hidden;min-height:calc(100dvh - 84px);margin:0;
-  padding:clamp(42px,8vw,88px) 18px 34px;box-sizing:border-box;direction:rtl;
-  display:flex;align-items:center;justify-content:center;
-  background:
-    radial-gradient(circle at 16% 18%,rgba(226,184,79,.30),transparent 24%),
-    radial-gradient(circle at 92% 80%,rgba(255,255,255,.13),transparent 31%),
-    linear-gradient(145deg,#3E0614 0%,#78102A 48%,#A51131 100%);
-  color:#fff;
-}
-.mwEntryHub:before{content:'';position:absolute;inset:-24% -35%;opacity:.16;transform:rotate(-12deg);
-  background:repeating-linear-gradient(90deg,transparent 0 62px,#F1C85A 63px 66px,transparent 67px 130px);pointer-events:none}
-.mwEntryHub:after{content:'';position:absolute;width:330px;height:330px;border:1px solid rgba(255,215,113,.20);border-radius:50%;left:-170px;bottom:-130px;box-shadow:0 0 0 42px rgba(255,255,255,.025),0 0 0 90px rgba(255,255,255,.018);pointer-events:none}
-.mwEntryInner{position:relative;z-index:1;width:min(560px,100%);text-align:center}
-.mwEntryLogo{width:92px;height:92px;margin:0 auto 14px;border-radius:26px;padding:5px;background:rgba(255,255,255,.96);box-shadow:0 18px 46px rgba(20,0,7,.34),0 0 0 1px rgba(255,223,133,.55);box-sizing:border-box}
-.mwEntryLogo img{width:100%;height:100%;display:block;object-fit:cover;border-radius:21px}
-.mwEntryEyebrow{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid rgba(248,211,111,.34);border-radius:999px;background:rgba(28,3,10,.20);font-size:10px;font-weight:900;color:#F7D87B;letter-spacing:.2px}
-.mwEntryTitle{font-size:clamp(34px,9vw,52px);line-height:1.05;margin:12px 0 6px;font-weight:950;letter-spacing:-1.2px}
-.mwEntryTitle span{color:#F0C657}
-.mwEntrySub{margin:0 auto 26px;max-width:430px;color:rgba(255,255,255,.78);font-size:13px;line-height:1.9;font-weight:700}
-.mwEntryActions{display:grid;gap:12px}
-.mwEntryAction{width:100%;border:0;border-radius:22px;min-height:94px;padding:17px 18px;display:flex;align-items:center;gap:14px;text-align:right;cursor:pointer;font-family:inherit;box-sizing:border-box;transition:transform .18s ease,box-shadow .18s ease}
-.mwEntryAction:active{transform:scale(.985)}
-.mwEntryActionIcon{width:54px;height:54px;border-radius:17px;display:grid;place-items:center;font-size:27px;flex:0 0 54px}
-.mwEntryActionCopy{flex:1;min-width:0}.mwEntryActionCopy b{display:block;font-size:19px;font-weight:950;line-height:1.3}.mwEntryActionCopy span{display:block;font-size:10.5px;font-weight:750;line-height:1.6;margin-top:3px}
-.mwEntryActionArrow{font-size:22px;font-weight:900;opacity:.75}
-.mwEntryRide{background:linear-gradient(135deg,#F7D66E,#DCAA36);color:#3B0A16;box-shadow:0 16px 36px rgba(16,0,5,.28),inset 0 1px 0 rgba(255,255,255,.65)}
-.mwEntryRide .mwEntryActionIcon{background:#4A0A1A;color:#F8D86D;box-shadow:inset 0 0 0 1px rgba(255,255,255,.09)}
-.mwEntryRide .mwEntryActionCopy span{color:#6C3C18}
-.mwEntryCaptain{background:rgba(255,255,255,.96);color:#4B0B1C;box-shadow:0 14px 32px rgba(16,0,5,.18),inset 0 0 0 1px rgba(255,226,151,.42)}
-.mwEntryCaptain .mwEntryActionIcon{background:#F9EDF0;color:#A51131}.mwEntryCaptain .mwEntryActionCopy span{color:#78656B}
-.mwEntryTrust{display:flex;justify-content:center;gap:7px;flex-wrap:wrap;margin-top:18px}
-.mwEntryTrust span{padding:6px 9px;border-radius:999px;background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.12);font-size:9px;font-weight:800;color:rgba(255,255,255,.84)}
-
-.mwRideHomeBar{display:none;align-items:center;justify-content:space-between;gap:10px;margin:12px 14px 0;direction:rtl}
-.mwRideHomeBar button{border:1px solid #E4D5D9;background:#fff;color:#851128;border-radius:13px;min-height:40px;padding:0 13px;font-family:inherit;font-weight:900;cursor:pointer}
-.mwRideHomeBar span{font-size:11px;font-weight:900;color:#6C5960}
-
-.mwMapChoice{margin-top:10px!important;padding:12px!important;border-radius:17px!important;background:linear-gradient(145deg,#FFFDFC,#FFF7F1)!important;border:1px solid #E5D6CE!important;color:#34272C!important;box-shadow:0 7px 18px rgba(75,32,45,.07)!important;line-height:1.45!important}
-.mwMapChoiceInner{display:grid;grid-template-columns:42px minmax(0,1fr);gap:10px;align-items:start;direction:rtl}
-.mwMapChoiceIcon{width:42px;height:42px;border-radius:13px;background:#F8E9ED;color:#A51131;display:grid;place-items:center;font-size:19px}
-.mwMapChoiceCopy{text-align:right;min-width:0}.mwMapChoiceCopy small{display:block;color:#967A82;font-size:8.5px;font-weight:900;margin-bottom:3px}.mwMapChoiceCopy b{display:block;color:#30252A;font-size:12px;font-weight:950;line-height:1.55;word-break:break-word}.mwMapChoiceStatus{display:inline-flex!important;align-items:center;gap:4px;margin-top:6px!important;color:#26774A!important;font-size:8.5px!important;font-weight:900!important}.mwMapChoiceStatus i{font-style:normal;width:15px;height:15px;border-radius:50%;display:grid;place-items:center;background:#DDF3E5;color:#1E7544;font-size:9px}
-.mwMapChoiceActions{grid-column:1/-1;display:flex;gap:7px;margin-top:3px}.mwMapChoiceActions button{margin:0!important;min-height:32px;padding:0 10px!important;border-radius:10px!important;font-family:inherit!important;font-size:9px!important;font-weight:900!important;cursor:pointer!important}.mwMapChoiceEdit{background:#A51131!important;color:#fff!important}.mwMapChoiceManual{background:#F4F0F1!important;color:#6E545C!important;border:1px solid #E5DADD!important}
-
-.mwAcNotice{margin-top:8px;padding:9px 10px;border-radius:12px;background:#FFF8E5;border:1px solid #EDD58C;color:#765715;font-size:9.5px;font-weight:800;line-height:1.65}
-
-@media (min-width:760px){
-  .mwEntryHub{min-height:620px;border-radius:0 0 36px 36px}.mwEntryActions{grid-template-columns:1fr 1fr}.mwEntryAction{min-height:112px}
-  .mwRideHomeBar{max-width:1080px;margin-left:auto;margin-right:auto}.mwEntryInner{width:min(780px,100%)}
-}
-@media (max-width:390px){.mwEntryHub{padding-left:13px;padding-right:13px}.mwEntryAction{min-height:86px;padding:14px}.mwEntryActionCopy b{font-size:17px}.mwEntryLogo{width:80px;height:80px}}
 </style>
 </head>
 <body>
 <div class="app">
 
   <!-- CUSTOMER -->
-  <section id="screenCustomer" class="screen active mwHomeMode">
+  <section id="screenCustomer" class="screen active">
     <header class="mwDesktopHeader" aria-label="التنقل الرئيسي">
       <div class="mwDesktopBrand">
         <div class="mwDesktopBrandIcon"><img id="mwDesktopBrandLogo" alt="شعار مشوارك"></div>
         <div class="mwDesktopBrandCopy"><b>مشوارك</b><span>احجز رحلتك بسهولة ووضوح</span></div>
       </div>
       <nav class="mwDesktopNav" aria-label="روابط مشوارك">
-        <button type="button" onclick="showMashwarakHome()">الرئيسية</button>
+        <button type="button" onclick="document.getElementById('mwPromoHero').scrollIntoView({behavior:'smooth',block:'start'})">الرئيسية</button>
         <button type="button" onclick="openScreen('priceList')">الأسعار</button>
         <button type="button" onclick="startUsageTour(true)">طريقة الاستخدام</button>
         <button type="button" onclick="openScreen('driver')">انضم كابتن</button>
         <button type="button" onclick="openPublicNotifications()">الإشعارات</button>
         <button type="button" onclick="window.location.href='tel:+201098505030'">تواصل معنا</button>
       </nav>
-      <button type="button" class="mwDesktopBookNow" onclick="openMashwarakRide()">اطلب مشوارك</button>
+      <button type="button" class="mwDesktopBookNow" onclick="document.getElementById('mwBooking').scrollIntoView({behavior:'smooth',block:'start'})">احجز مشوارك</button>
     </header>
 
     <div class="mwTop">
       <button type="button" class="mwTopBtn" onclick="openMainDrawer()" aria-label="فتح القائمة">☰</button>
       <button type="button" class="mwTopBtn mwTopNotice" onclick="openPublicNotifications()">🔔<span id="mwNoticeDot" class="mwTopNoticeDot" style="display:none"></span></button>
-    </div>
-
-    <div id="mwEntryHub" class="mwEntryHub" aria-label="الرئيسية">
-      <div class="mwEntryInner">
-        <div class="mwEntryLogo"><img id="mwEntryLogo" alt="شعار مشوارك"></div>
-        <div class="mwEntryEyebrow">✦ خدمة مشاوير منظمة وواضحة</div>
-        <h1 class="mwEntryTitle">كل مشوار يبدأ من <span>هنا</span></h1>
-        <p class="mwEntrySub">اختار اللي محتاجه، ومشوارك يكمل معاك بخطوات بسيطة من غير زحمة ولا تعقيد.</p>
-        <div class="mwEntryActions">
-          <button type="button" class="mwEntryAction mwEntryRide" onclick="openMashwarakRide()">
-            <span class="mwEntryActionIcon">📍</span>
-            <span class="mwEntryActionCopy"><b>اطلب مشوارك</b><span>حدد من وإلى ثم الموعد والتأكيد في 3 خطوات</span></span>
-            <span class="mwEntryActionArrow">‹</span>
-          </button>
-          <button type="button" class="mwEntryAction mwEntryCaptain" onclick="openScreen('driver')">
-            <span class="mwEntryActionIcon">🚘</span>
-            <span class="mwEntryActionCopy"><b>انضمام كابتن</b><span>سجل بياناتك وسيارتك وابدأ معنا</span></span>
-            <span class="mwEntryActionArrow">‹</span>
-          </button>
-        </div>
-        <div class="mwEntryTrust"><span>📍 تحديد دقيق</span><span>✓ متابعة الطلب</span><span>☎ دعم مباشر</span></div>
-      </div>
     </div>
 
     <div class="mwHero mwPromoHero" id="mwPromoHero" aria-label="مميزات مشوارك">
@@ -5487,8 +5390,6 @@ button[onclick*="openScreen('priceList')"],button[onclick*="drawerGo('priceList'
         <button type="button" aria-label="الإعلان الرابع" onclick="goToPromoSlide(3,true)"></button>
       </div>
     </div>
-
-    <div class="mwRideHomeBar"><span>رحلة جديدة • 3 خطوات</span><button type="button" onclick="showMashwarakHome()">⌂ الرئيسية</button></div>
 
     <div id="mwBooking" class="mwBooking">
       <div class="mwBookingHead">
@@ -5701,9 +5602,8 @@ button[onclick*="openScreen('priceList')"],button[onclick*="drawerGo('priceList'
           <div>
             <b>هل تحتاج سيارة بتكييف شغال؟</b>
             <span>حدد تفضيلك للتكييف ليظهر للكابتن ضمن تفاصيل الطلب.</span>
-            <div class="mwAcNotice">تنبيه: تشغيل التكييف قد يضيف تكلفة بسيطة على الرحلة، ويتم تأكيدها قبل تنفيذ المشوار.</div>
           </div>
-          <div class="mwAcBadge">اختيارك</div>
+          <div class="mwAcBadge">اختياري</div>
         </div>
 
         <div class="mwAcChoices">
@@ -6699,14 +6599,20 @@ const usageTourSteps=[
 ];
 
 function maybeStartFirstUseTour(){
-  // V2.6.2: the premium two-action home is now the first-use experience.
-  // The guide remains available manually from the menu.
-  return;
+  try{
+    const params=new URLSearchParams(window.location.search||'');
+    if(params.get('open'))return;
+    if(localStorage.getItem(MASHWARAK_TOUR_KEY)==='1')return;
+  }catch(e){}
+
+  setTimeout(function(){
+    startUsageTour(false);
+  },800);
 }
 
 function startUsageTour(force){
   try{closeMainDrawer();}catch(e){}
-  try{openScreen('customer');openMashwarakRide(true);}catch(e){}
+  try{openScreen('customer');}catch(e){}
 
   usageTourActive=true;
   usageTourIndex=0;
@@ -8305,10 +8211,6 @@ function handleMashwarakNativeBack(){
     }
 
     const activeScreen=document.querySelector('.screen.active');
-    if(activeScreen && activeScreen.id==='screenCustomer' && activeScreen.classList.contains('mwRideMode')){
-      showMashwarakHome();
-      return true;
-    }
     if(activeScreen && activeScreen.id!=='screenCustomer'){
       openMainDrawer(true);
       return true;
@@ -8324,27 +8226,6 @@ function enableSelectScrollProtection(){
   // Intentionally disabled.
   // Locking the page while a native select is focused caused intermittent
   // frozen scroll and dead taps inside Google Sites/mobile browsers.
-}
-
-function showMashwarakHome(noScroll){
-  const screen=document.getElementById('screenCustomer');
-  if(!screen)return;
-  screen.classList.add('mwHomeMode');
-  screen.classList.remove('mwRideMode');
-  try{rideWizardGo(1);}catch(e){}
-  if(noScroll!==true)window.scrollTo({top:0,behavior:'smooth'});
-}
-
-function openMashwarakRide(noScroll){
-  const screen=document.getElementById('screenCustomer');
-  if(!screen)return;
-  if(!screen.classList.contains('active'))openScreen('customer');
-  screen.classList.remove('mwHomeMode');
-  screen.classList.add('mwRideMode');
-  rideWizardGo(1);
-  if(noScroll!==true){
-    setTimeout(function(){document.getElementById('mwBooking')?.scrollIntoView({behavior:'smooth',block:'start'});},60);
-  }
 }
 
 function openScreen(name){
@@ -8367,7 +8248,6 @@ function openScreen(name){
   };
   document.getElementById(map[name]||'screenCustomer').classList.add('active');
   if(name==='priceList') renderPublicPrices();
-  if(name==='customer' || !map[name]) showMashwarakHome(true);
   window.scrollTo({top:0,behavior:'smooth'});
 }
 
@@ -9086,15 +8966,11 @@ function openRideContactSheet(){
   const date=document.getElementById('rideDate').value;
   const time=document.getElementById('rideTime').value;
   const missing=[];
-  const hasExactFrom=!!(document.getElementById('rideFromLat').value && document.getElementById('rideFromLng').value);
-  const hasExactTo=!!(document.getElementById('rideToLat').value && document.getElementById('rideToLng').value);
 
-  if(!from) missing.push(hasExactFrom?'مكان الانطلاق':'مكان الانطلاق');
-  if(!hasExactTo){
-    if(!gov) missing.push('المحافظة / الوجهة');
-    if(gov && gov!=='AIRPORT' && !toCenter) missing.push('المركز / المدينة');
-    if(gov && gov!=='AIRPORT' && !toVillage) missing.push('القرية / المنطقة');
-  }
+  if(!from) missing.push(document.getElementById('rideFromCenter').value==='AIRPORT'?'اختيار مطار الانطلاق':'مكان الانطلاق');
+  if(!gov) missing.push('المحافظة / الوجهة');
+  if(gov && gov!=='AIRPORT' && !toCenter) missing.push('المركز / المدينة');
+  if(gov && gov!=='AIRPORT' && !toVillage) missing.push('القرية / المنطقة');
   if(!to) missing.push('الوجهة');
   if(!date) missing.push('تاريخ المشوار');
   if(!time) missing.push('وقت المشوار');
@@ -9953,10 +9829,8 @@ if(window.visualViewport){
 document.addEventListener('DOMContentLoaded',function(){
   try{
     var desktopLogo=document.getElementById('mwDesktopBrandLogo');
-    var entryLogo=document.getElementById('mwEntryLogo');
     var approvedLogo=document.querySelector('.mwBookingAppIcon img') || document.querySelector('.mwPromoAppIcon img');
     if(desktopLogo && approvedLogo && approvedLogo.src){ desktopLogo.src=approvedLogo.src; }
-    if(entryLogo && approvedLogo && approvedLogo.src){ entryLogo.src=approvedLogo.src; }
   }catch(_){ }
 });
 </script>
@@ -9964,7 +9838,7 @@ document.addEventListener('DOMContentLoaded',function(){
 
 <script>
 /* =========================================================
-   MASHWARAK V2.6.2 | HOME + LOCATION UX
+   MASHWARAK V2.6.1 | NATIVE LOCATION PICKER UX
    - Lazy Leaflet/OpenStreetMap picker for FROM / TO.
    - Exact lat/lng + map URL saved with ride.
    - Can import coordinates from map links.
@@ -10200,22 +10074,11 @@ document.addEventListener('DOMContentLoaded',function(){
     }else setStatus('الرابط المختصر يحتاج فتحه من تطبيق مشوارك أو لصق الإحداثيات مباشرة.',true);
   };
 
-  function compactLocationLabel(value){
-    const raw=String(value||'').replace(/؛/g,',').replace(/،/g,',');
-    const banned=['مصر','egypt','arab republic of egypt','جمهورية مصر العربية'];
-    const out=[];
-    raw.split(',').map(function(x){return x.trim()}).filter(Boolean).forEach(function(part){
-      if(banned.indexOf(part.toLowerCase())!==-1)return;
-      if(!out.some(function(x){return x.toLowerCase()===part.toLowerCase()}))out.push(part);
-    });
-    return out.slice(0,3).join('، ');
-  }
-
   function setMapSelection(mode,lat,lng,label,source){
     mode=mode==='FROM'?'FROM':'TO';lat=num(lat);lng=num(lng);if(lat===null||lng===null)return false;
     const p=sidePrefix(mode),safeLabel=String(label||'').trim();
     const coords=fmt(lat)+', '+fmt(lng);
-    const display=compactLocationLabel(safeLabel)||'موقع محدد على الخريطة';
+    const display=safeLabel||'موقع محدد على الخريطة';
     document.getElementById(p+'Lat').value=fmt(lat);
     document.getElementById(p+'Lng').value=fmt(lng);
     document.getElementById(p+'MapUrl').value=mapUrl(lat,lng);
@@ -10224,12 +10087,7 @@ document.addEventListener('DOMContentLoaded',function(){
     if(mode==='TO')document.getElementById('rideToDetail').value=display;
     const choice=document.getElementById(p+'MapChoice');
     if(choice){
-      const placeKind=mode==='FROM'?'نقطة الانطلاق':'الوجهة';
-      choice.innerHTML='<div class="mwMapChoiceInner">'+
-        '<div class="mwMapChoiceIcon">📍</div>'+
-        '<div class="mwMapChoiceCopy"><small>'+placeKind+'</small><b>'+escapeMapHtml(display)+'</b><span class="mwMapChoiceStatus"><i>✓</i> تم تحديد الموقع بدقة</span></div>'+
-        '<div class="mwMapChoiceActions"><button class="mwMapChoiceEdit" type="button" onclick="openMashwarakMapPicker(\''+mode+'\')">تعديل</button><button class="mwMapChoiceManual" type="button" onclick="clearMashwarakMapLocation(\''+mode+'\')">اختيار يدوي</button></div>'+
-        '</div>';
+      choice.innerHTML='📍 <b>'+escapeMapHtml(display)+'</b><br><span>تم حفظ الموقع الدقيق على الخريطة</span><button type="button" onclick="clearMashwarakMapLocation(\''+mode+'\')">إلغاء الموقع</button>';
       choice.classList.add('show');
     }
     setExactLocationUi(mode,true);
@@ -10311,7 +10169,7 @@ document.addEventListener('DOMContentLoaded',function(){
     const label=String(data.label||'').trim();
     autoFillLocationSelectors('TO',data);
     setMapSelection('TO',lat,lng,label,'ANDROID');
-    try{openMashwarakRide(true);rideWizardGo(1);document.getElementById('rideToGroup')?.scrollIntoView({behavior:'smooth',block:'center'})}catch(_){ }
+    try{openScreen('customer');rideWizardGo(1);document.getElementById('rideToGroup')?.scrollIntoView({behavior:'smooth',block:'center'})}catch(_){ }
   }
 
   window.addEventListener('message',function(event){

@@ -1,0 +1,4810 @@
+/**
+ * MASHWARAK - V1.0
+ * Google Apps Script backend
+ * Mobile-first private rides management platform
+ */
+
+const APP = {
+  NAME: 'مشوارك',
+  VERSION: '5.3.1',
+  TZ: 'Africa/Cairo',
+  SHEETS: {
+    RIDES: 'RideRequests',
+    DRIVERS: 'Drivers',
+    SETTINGS: 'Settings',
+    LOGS: 'ActivityLog',
+    NOTIFICATIONS: 'Notifications',
+    PRICES: 'Prices',
+    ADMIN_USERS: 'AdminUsers',
+    CUSTOMERS: 'Customers',
+    TRANSACTIONS: 'Transactions'
+  }
+};
+
+const FINANCE_RULES = {
+  COMMISSION_PERCENT: 10
+};
+
+function doGet(e) {
+  const view = String((e && e.parameter && e.parameter.view) || '').toLowerCase();
+  const file = view === 'control' ? 'AdminV2' : (view === 'admin' ? 'Admin' : 'Index');
+  const title = view === 'control'
+    ? 'مشوارك | مركز التحكم'
+    : (view === 'admin' ? 'مشوارك | لوحة الإدارة' : APP.NAME);
+
+  return HtmlService.createTemplateFromFile(file)
+    .evaluate()
+    .setTitle(title)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no');
+}
+
+/**
+ * Run once after creating the Apps Script project.
+ * Creates the database spreadsheet and all required sheets.
+ */
+function setupSystem() {
+  const props = PropertiesService.getScriptProperties();
+  let dbId = props.getProperty('MASHWARAK_DB_ID');
+
+  let ss;
+  if (dbId) {
+    try { ss = SpreadsheetApp.openById(dbId); } catch (e) {}
+  }
+
+  if (!ss) {
+    ss = SpreadsheetApp.create('Mashwarak - Database');
+    props.setProperty('MASHWARAK_DB_ID', ss.getId());
+  }
+
+  createOrResetHeaders_(ss, APP.SHEETS.RIDES, [
+    'Ride ID','Created At','Customer Name','Mobile','Trip Type',
+    'From','To','Date','Time','Passengers','Notes',
+    'Estimated Price','Final Price','Assigned Driver ID','Assigned Driver Name',
+    'Status','Admin Notes','Updated At',
+    'Return Date','Return Time','Waiting','Waiting Details','Terms Accepted',
+    'Extras','Captain Age Preference','Captain Age Min','Captain Age Max',
+    'Customer AC Preference','Driver Cost','Mashwarak Commission','Commission Rate','Workflow Stage','Contacted At','Confirmed At','Assigned At','Started At','Arrived At','Completed At','Cancelled At','Cancel Reason','Client Request ID',
+    'From Latitude','From Longitude','From Map URL','From Map Label',
+    'To Latitude','To Longitude','To Map URL','To Map Label'
+  ]);
+
+  createOrResetHeaders_(ss, APP.SHEETS.DRIVERS, [
+    'Driver ID','Created At','Full Name','Mobile WhatsApp','City Area',
+    'Car Type','Brand Model','Year','Color','Seats','AC Working',
+    'Availability Type','Availability Details','Notes',
+    'Admin Status','Admin Notes','Updated At',
+    'National ID Front URL','National ID Back URL','Driver License URL',
+    'Car License URL','Car Photo URL','Terms Accepted','Age','Brand','Model'
+  ]);
+
+  createOrResetHeaders_(ss, APP.SHEETS.SETTINGS, [
+    'Key','Value','Notes'
+  ]);
+
+  createOrResetHeaders_(ss, APP.SHEETS.LOGS, [
+    'Timestamp','Action','Entity Type','Entity ID','Details'
+  ]);
+
+  createOrResetHeaders_(ss, APP.SHEETS.NOTIFICATIONS, [
+    'Notification ID','Created At','Title','Message','Active'
+  ]);
+
+  createOrResetHeaders_(ss, APP.SHEETS.PRICES, [
+    'Price ID','Destination','Service Type','Price','Included Wait Minutes',
+    'Extra Wait Hour Price','Notes','Active','Updated At'
+  ]);
+
+  const settings = ss.getSheetByName(APP.SHEETS.SETTINGS);
+  seedSetting_(settings, 'ADMIN_PIN_HASH', hash_('2580'), 'Temporary admin PIN. Change using setAdminPin("newPin")');
+  seedSetting_(settings, 'BUSINESS_WHATSAPP', '', 'WhatsApp number in international format later');
+  seedSetting_(settings, 'BUSINESS_PHONE', '', 'Business phone later');
+  seedSetting_(settings, 'PRIMARY_START_AREA', '', 'Main starting area will be configured later');
+  seedSetting_(settings, 'PRICE_MODE', 'MANUAL', 'MANUAL now, MATRIX later');
+  seedSetting_(settings, 'PRICE_BASE_AREA', 'بركة السبع - المنوفية', 'Reference origin for public price list');
+  seedSetting_(settings, 'INCLUDED_WAIT_MINUTES', '60', 'Default included waiting time');
+  seedSetting_(settings, 'EXTRA_WAIT_HOUR_PRICE', '75', 'Price for each extra waiting hour');
+
+  formatSheet_(ss.getSheetByName(APP.SHEETS.RIDES));
+  formatSheet_(ss.getSheetByName(APP.SHEETS.DRIVERS));
+  formatSheet_(settings);
+  formatSheet_(ss.getSheetByName(APP.SHEETS.LOGS));
+  formatSheet_(ss.getSheetByName(APP.SHEETS.NOTIFICATIONS));
+  formatSheet_(ss.getSheetByName(APP.SHEETS.PRICES));
+
+  seedInitialPrices_(ss.getSheetByName(APP.SHEETS.PRICES));
+
+  props.setProperty('MASHWARAK_READY', '1');
+
+  return {
+    success: true,
+    databaseUrl: ss.getUrl(),
+    temporaryAdminPin: '2580'
+  };
+}
+
+function setAdminPin(newPin) {
+  newPin = String(newPin || '').trim();
+  if (!/^\d{4,8}$/.test(newPin)) {
+    throw new Error('الرقم السري يجب أن يكون من 4 إلى 8 أرقام.');
+  }
+  setSetting_('ADMIN_PIN_HASH', hash_(newPin));
+  return { success: true };
+}
+
+function getPublicBootstrap() {
+  ensureReady_();
+  const settings = getSettings_();
+  return {
+    appName: APP.NAME,
+    version: APP.VERSION,
+    whatsapp: settings.BUSINESS_WHATSAPP || '',
+    phone: settings.BUSINESS_PHONE || '',
+    primaryStartArea: settings.PRIMARY_START_AREA || '',
+    priceMode: settings.PRICE_MODE || 'MANUAL',
+    priceBaseArea: settings.PRICE_BASE_AREA || 'بركة السبع - المنوفية',
+    includedWaitMinutes: Number(settings.INCLUDED_WAIT_MINUTES || 60),
+    extraWaitHourPrice: Number(settings.EXTRA_WAIT_HOUR_PRICE || 75)
+  };
+}
+
+/* =========================
+   CUSTOMER RIDE REQUEST
+========================= */
+
+
+function normalizeArabicForPrice_(v) {
+  return clean_(v)
+    .toLowerCase()
+    .replace(/[ًٌٍَُِّْـ]/g,'')
+    .replace(/[أإآ]/g,'ا')
+    .replace(/ى/g,'ي')
+    .replace(/ة/g,'ه')
+    .replace(/[^\u0600-\u06FF0-9a-zA-Z]+/g,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
+function parseWaitingMinutes_(v) {
+  const s=normalizeArabicForPrice_(v);
+  if(!s) return 0;
+  if(s.indexOf('اكثر من ساعتين')!==-1) return -1;
+  if(s.indexOf('120')!==-1 || s.indexOf('ساعتان')!==-1 || s.indexOf('ساعتين')!==-1) return 120;
+  if(s.indexOf('90')!==-1 || s.indexOf('ساعه ونصف')!==-1) return 90;
+  if(s.indexOf('60')!==-1 || s==='ساعه') return 60;
+  if(s.indexOf('30')!==-1 || s.indexOf('نصف ساعه')!==-1) return 30;
+  if(s.indexOf('15')!==-1 || s.indexOf('ربع ساعه')!==-1) return 15;
+  return 0;
+}
+
+function findBestPriceForDestination_(to) {
+  const rows=getPublicPrices();
+  const target=normalizeArabicForPrice_(to);
+  if(!target) return null;
+
+  // Never guess from similar words. We only price when the configured
+  // destination appears explicitly in the customer's destination text,
+  // or the two normalized strings are exactly equal.
+  const candidates=[];
+
+  rows.forEach(function(p){
+    const d=normalizeArabicForPrice_(p.destination);
+    if(!d) return;
+
+    if(target===d){
+      candidates.push({p:p,score:10000+d.length});
+      return;
+    }
+
+    // Require the whole configured destination phrase to be present.
+    // Padding with spaces prevents partial-word matches such as
+    // قويسنا accidentally matching a different destination.
+    const paddedTarget=' '+target+' ';
+    const paddedDest=' '+d+' ';
+    if(paddedTarget.indexOf(paddedDest)!==-1){
+      candidates.push({p:p,score:5000+d.length});
+    }
+  });
+
+  if(!candidates.length) return null;
+
+  // Prefer the most specific/longest exact phrase when several are present.
+  candidates.sort(function(a,b){return b.score-a.score;});
+  return candidates[0].p;
+}
+function calculateEstimatedRidePrice_(to,tripType,waitingDetails,acPreference) {
+  const match=findBestPriceForDestination_(to);
+  if(!match){
+    const acNote = String(acPreference||'').toUpperCase()==='WITH_AC'
+      ? ' تشغيل التكييف قد يضيف تكلفة بسيطة، ويتم تأكيدها قبل تنفيذ المشوار.'
+      : '';
+    return {
+      estimatedPrice:'',
+      matchedDestination:'',
+      note:'الوجهة غير موجودة حاليًا في قائمة الأسعار، وسيتم تأكيد السعر هاتفيًا.' + acNote
+    };
+  }
+
+  let total=Number(match.price||0);
+  const included=Number(match.includedWaitMinutes||0);
+  const extraHour=Number(match.extraWaitHourPrice||75);
+  const requested=parseWaitingMinutes_(waitingDetails);
+  let waitingNote='';
+
+  if(requested===-1){
+    waitingNote=' مدة الانتظار الأكبر من ساعتين يتم تسعيرها عند التواصل.';
+  }else if(requested>included){
+    const extraMinutes=requested-included;
+    total += Math.round((extraMinutes/60)*extraHour);
+    waitingNote=' يشمل الحساب تكلفة الانتظار الإضافي المحدد.';
+  }
+
+  let acNote='';
+  if(String(acPreference||'').toUpperCase()==='WITH_AC'){
+    // No fixed AC surcharge is calculated automatically.
+    acNote=' تشغيل التكييف قد يضيف تكلفة بسيطة، ويتم تأكيدها قبل تنفيذ المشوار.';
+  }
+
+  let note='سعر مبدئي بناءً على قائمة الأسعار، ويتم تأكيد السعر النهائي هاتفيًا.';
+  if(tripType==='ROUND'){
+    note+=' السعر الظاهر للذهاب؛ تكلفة العودة يتم تأكيدها عند التواصل.';
+  }
+  note+=waitingNote;
+  note+=acNote;
+
+  return {
+    estimatedPrice:Math.round(total),
+    matchedDestination:match.destination,
+    note:note
+  };
+}
+
+
+
+function roundMoneyV28_(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function calculateRideFinanceV28_(amount) {
+  const price = Math.max(0, roundMoneyV28_(amount));
+  const rate = Number(FINANCE_RULES.COMMISSION_PERCENT || 10);
+  const commission = roundMoneyV28_(price * rate / 100);
+  const driverDue = roundMoneyV28_(price - commission);
+
+  return {
+    price: price,
+    commissionRate: rate,
+    commission: commission,
+    driverDue: driverDue
+  };
+}
+
+
+/* =========================
+   SMART LOCATION V5.3.0
+========================= */
+function normalizeRidePointV530_(latValue, lngValue) {
+  const lat = Number(latValue);
+  const lng = Number(lngValue);
+  if (!isFinite(lat) || !isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return {
+    lat: Math.round(lat * 1000000) / 1000000,
+    lng: Math.round(lng * 1000000) / 1000000
+  };
+}
+
+function buildRideMapUrlV530_(lat, lng) {
+  return 'https://www.google.com/maps/search/?api=1&query=' +
+    encodeURIComponent(String(lat) + ',' + String(lng));
+}
+
+function extractCoordsFromMapTextV530_(raw) {
+  let text = String(raw || '').trim();
+  if (!text) return null;
+  try { text = decodeURIComponent(text.replace(/\+/g, ' ')); } catch (_) {}
+  const patterns = [
+    /(?:query|q|ll|destination)=\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/i,
+    /@\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/,
+    /geo:\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/i,
+    /(?:^|[^\d.-])(-?\d{1,2}\.\d{4,})\s*,\s*(-?\d{1,3}\.\d{4,})(?:[^\d.]|$)/
+  ];
+  for (let i = 0; i < patterns.length; i++) {
+    const m = text.match(patterns[i]);
+    if (!m) continue;
+    const p = normalizeRidePointV530_(m[1], m[2]);
+    if (p) return p;
+  }
+  return null;
+}
+
+function isAllowedMapHostV530_(url) {
+  const m = String(url || '').match(/^https:\/\/([^\/?#]+)/i);
+  if (!m) return false;
+  const host = String(m[1] || '').toLowerCase().replace(/:\d+$/, '');
+  return [
+    'maps.app.goo.gl',
+    'maps.google.com',
+    'www.google.com',
+    'google.com',
+    'goo.gl'
+  ].indexOf(host) >= 0;
+}
+
+/**
+ * Public helper used only when the customer pastes a Google Maps short link.
+ * Fetching is restricted to Google Maps hosts to avoid turning the script into
+ * a generic URL fetch/proxy endpoint.
+ */
+function resolveMashwarakMapLinkV530(raw) {
+  const direct = extractCoordsFromMapTextV530_(raw);
+  if (direct) return {success:true, lat:direct.lat, lng:direct.lng, resolved:false};
+
+  let url = clean_(raw);
+  const urlMatch = url.match(/https:\/\/[^\s]+/i);
+  if (urlMatch) url = urlMatch[0];
+  if (!isAllowedMapHostV530_(url)) {
+    return {success:false, error:'Unsupported map link'};
+  }
+  // goo.gl is accepted only for the historical /maps short-link path.
+  if (/^https:\/\/goo\.gl\//i.test(url) && !/^https:\/\/goo\.gl\/maps(?:\/|$)/i.test(url)) {
+    return {success:false, error:'Unsupported short link'};
+  }
+
+  let current = url;
+  for (let i = 0; i < 6; i++) {
+    const point = extractCoordsFromMapTextV530_(current);
+    if (point) return {success:true, lat:point.lat, lng:point.lng, resolved:i > 0};
+    if (!isAllowedMapHostV530_(current)) break;
+
+    let response;
+    try {
+      response = UrlFetchApp.fetch(current, {
+        method:'get',
+        followRedirects:false,
+        muteHttpExceptions:true,
+        headers:{'User-Agent':'Mashwarak/1.0 LocationResolver'}
+      });
+    } catch (e) {
+      return {success:false, error:'Map link fetch failed'};
+    }
+
+    const headers = response.getHeaders ? response.getHeaders() : {};
+    let location = '';
+    Object.keys(headers || {}).some(function(k){
+      if (String(k).toLowerCase() === 'location') {
+        location = String(headers[k] || '');
+        return true;
+      }
+      return false;
+    });
+    if (!location) {
+      const bodyPoint = extractCoordsFromMapTextV530_(response.getContentText ? response.getContentText() : '');
+      if (bodyPoint) return {success:true, lat:bodyPoint.lat, lng:bodyPoint.lng, resolved:true};
+      break;
+    }
+    if (!/^https:\/\//i.test(location)) break;
+    if (!isAllowedMapHostV530_(location)) break;
+    current = location;
+  }
+
+  const finalPoint = extractCoordsFromMapTextV530_(current);
+  return finalPoint
+    ? {success:true, lat:finalPoint.lat, lng:finalPoint.lng, resolved:true}
+    : {success:false, error:'Coordinates not found'};
+}
+
+function submitRideRequest(payload) {
+  ensureReady_();
+  payload = payload || {};
+
+  const name = clean_(payload.customerName);
+  const mobile = normalizePhone_(payload.mobile);
+  const tripType = payload.tripType === 'ROUND' ? 'ROUND' : 'ONE_WAY';
+  const from = clean_(payload.from);
+  const to = clean_(payload.to);
+  const date = clean_(payload.date);
+  const time = clean_(payload.time);
+  const passengers = Math.max(1, Math.min(20, Number(payload.passengers || 1)));
+  const notes = clean_(payload.notes);
+  const returnDate = clean_(payload.returnDate);
+  const returnTime = clean_(payload.returnTime);
+  const waiting = String(payload.waiting || 'NO').toUpperCase() === 'YES' ? 'YES' : 'NO';
+  const waitingDetails = clean_(payload.waitingDetails);
+  const termsAccepted = payload.termsAccepted === true || String(payload.termsAccepted).toUpperCase() === 'TRUE';
+  const extras = Array.isArray(payload.extras) ? payload.extras.map(clean_).filter(Boolean) : [];
+  const captainAgePreference = String(payload.captainAgePreference || 'NO').toUpperCase() === 'YES' ? 'YES' : 'NO';
+  const captainAgeMin = clean_(payload.captainAgeMin);
+  const captainAgeMax = clean_(payload.captainAgeMax);
+  const acPreferenceRaw = String(payload.acPreference || '').toUpperCase();
+  const acPreference = acPreferenceRaw === 'WITH_AC' ? 'WITH_AC' : 'WITHOUT_AC';
+  const requestId = clean_(payload.requestId).slice(0, 120);
+  const fromPoint = normalizeRidePointV530_(payload.fromLat, payload.fromLng);
+  const toPoint = normalizeRidePointV530_(payload.toLat, payload.toLng);
+  const fromMapLabel = clean_(payload.fromMapLabel).slice(0, 250);
+  const toMapLabel = clean_(payload.toMapLabel).slice(0, 250);
+  const fromMapUrl = fromPoint ? buildRideMapUrlV530_(fromPoint.lat, fromPoint.lng) : '';
+  const toMapUrl = toPoint ? buildRideMapUrlV530_(toPoint.lat, toPoint.lng) : '';
+
+  if (!name) throw new Error('من فضلك اكتب الاسم.');
+  if (mobile.length < 8) throw new Error('من فضلك اكتب رقم موبايل صحيح.');
+  if (!from) throw new Error('حدد مكان الانطلاق.');
+  if (!to) throw new Error('حدد الوجهة.');
+  if (!date) throw new Error('حدد تاريخ المشوار.');
+  if (!time) throw new Error('حدد وقت المشوار.');
+  if (tripType === 'ROUND' && !returnDate) throw new Error('حدد تاريخ العودة.');
+  if (tripType === 'ROUND' && !returnTime) throw new Error('حدد وقت العودة.');
+  if (waiting === 'YES' && !waitingDetails) throw new Error('اكتب تفاصيل الانتظار.');
+  if (!termsAccepted) throw new Error('يجب الموافقة على الشروط والأحكام.');
+  if (captainAgePreference === 'YES') {
+    if (!captainAgeMin || !captainAgeMax) throw new Error('اختر نطاق سن الكابتن المفضل.');
+    if (Number(captainAgeMin) > Number(captainAgeMax)) throw new Error('نطاق سن الكابتن غير صحيح.');
+  }
+
+  const now = new Date();
+  // V5.3.0 Smart Location phase 1:
+  // destination-list automatic pricing is intentionally disabled. The next
+  // pricing phase will use actual driving-route distance x configured EGP/km.
+  const estimate = {
+    estimatedPrice:'',
+    matchedDestination:'',
+    note:'التسعير التلقائي غير مفعل حاليًا.'
+  };
+  const finance = {price:0,driverDue:0,commission:0,commissionRate:Number(FINANCE_RULES.COMMISSION_PERCENT || 10)};
+  const sh = getDb_().getSheetByName(APP.SHEETS.RIDES);
+  if (!sh) throw new Error('جدول طلبات المشاوير غير موجود.');
+
+  ensureNamedHeaders_(sh, [
+    'Return Date','Return Time','Waiting','Waiting Details','Terms Accepted',
+    'Extras','Captain Age Preference','Captain Age Min','Captain Age Max',
+    'Customer AC Preference','From Latitude','From Longitude','From Map URL','From Map Label',
+    'To Latitude','To Longitude','To Map URL','To Map Label',
+    'Driver Cost','Mashwarak Commission','Commission Rate','Workflow Stage','Contacted At','Confirmed At','Assigned At','Started At','Arrived At','Completed At','Cancelled At','Cancel Reason','Client Request ID'
+  ]);
+
+  // Generate the candidate ID before the write lock. nextId_ uses the script
+  // lock internally, so keeping it outside avoids nested-lock deadlocks.
+  const candidateId = nextId_('R', APP.SHEETS.RIDES);
+  const writeLock = LockService.getScriptLock();
+  writeLock.waitLock(15000);
+  let id = candidateId;
+  try {
+    if (requestId) {
+      const existing = findRideByClientRequestIdV242_(sh, requestId);
+      if (existing) {
+        return {
+          success:true,
+          rideId:existing.rideId,
+          estimatedPrice:existing.estimatedPrice || estimate.estimatedPrice || '',
+          matchedDestination:estimate.matchedDestination || '',
+          estimateNote:estimate.note || '',
+          acSurcharge:0,
+          duplicate:true,
+          message:'تم استلام الطلب بالفعل.'
+        };
+      }
+    }
+
+    appendRideNamedRowV26_(sh, {
+      'Ride ID':id,
+      'Created At':now,
+      'Customer Name':name,
+      'Mobile':mobile,
+      'Trip Type':tripType,
+      'From':from,
+      'To':to,
+      'Date':date,
+      'Time':time,
+      'Passengers':passengers,
+      'Notes':notes,
+      'Estimated Price':estimate.estimatedPrice || '',
+      'Final Price':'',
+      'Assigned Driver ID':'',
+      'Assigned Driver Name':'',
+      'Status':'NEW',
+      'Admin Notes':'',
+      'Updated At':now,
+      'Return Date':returnDate,
+      'Return Time':returnTime,
+      'Waiting':waiting,
+      'Waiting Details':waitingDetails,
+      'Terms Accepted':termsAccepted,
+      'Extras':extras.join(' | '),
+      'Captain Age Preference':captainAgePreference,
+      'Captain Age Min':captainAgeMin,
+      'Captain Age Max':captainAgeMax,
+      'Customer AC Preference':acPreference,
+      'From Latitude':fromPoint ? fromPoint.lat : '',
+      'From Longitude':fromPoint ? fromPoint.lng : '',
+      'From Map URL':fromMapUrl,
+      'From Map Label':fromMapLabel,
+      'To Latitude':toPoint ? toPoint.lat : '',
+      'To Longitude':toPoint ? toPoint.lng : '',
+      'To Map URL':toMapUrl,
+      'To Map Label':toMapLabel,
+      'Driver Cost':'',
+      'Mashwarak Commission':'',
+      'Commission Rate':finance.commissionRate,
+      'Workflow Stage':'NEW',
+      'Client Request ID':requestId
+    });
+  } finally {
+    writeLock.releaseLock();
+  }
+
+  // A ride is considered accepted as soon as the durable RideRequests row is
+  // written. Logging, customer aggregation and monitor FCM must never block
+  // the client. V5.2.4 restores immediate monitor notifications: try direct
+  // NEW_RIDE push first, and only fall back to the retry queue on failure.
+  try {
+    log_('CREATE_RIDE', 'RIDE', id, JSON.stringify({from:from,to:to,mobile:mobile,acPreference:acPreference,requestId:requestId}));
+  } catch (logErr) {}
+  try { invalidateControlSnapshotV23_(); } catch (cacheErr) {}
+
+  try {
+    upsertCustomerFromRide_(id, name, mobile, now);
+  } catch (customerErr) {
+    try { log_('CUSTOMER_UPSERT_ERROR','RIDE',id,String(customerErr)); } catch (_) {}
+  }
+
+  let instantRidePushSent = false;
+  try {
+    const directPush = sendMashwarakAdminPush_(
+      'طلب مشوار جديد',
+      String(name || '') + ' | ' + String(from || '') + ' ← ' + String(to || ''),
+      'NEW_RIDE',
+      id
+    );
+    if (directPush && directPush.success) {
+      instantRidePushSent = true;
+      try { log_('ADMIN_PUSH_SENT','RIDE',id,'instant monitor topic mashwarak_admin_all'); } catch (_) {}
+    } else {
+      throw new Error((directPush && directPush.error) || 'FCM admin push not sent');
+    }
+  } catch (pushErr) {
+    try { log_('ADMIN_PUSH_FALLBACK_QUEUE','RIDE',id,String(pushErr)); } catch (_) {}
+    try {
+      queueRidePostSubmitV242_({
+        rideId:id,
+        name:name,
+        mobile:mobile,
+        from:from,
+        to:to,
+        when:now.getTime(),
+        retryCount:0,
+        lastError:String(pushErr && pushErr.message ? pushErr.message : pushErr)
+      });
+    } catch (queueErr) {
+      try { log_('POST_SUBMIT_QUEUE_ERROR','RIDE',id,String(queueErr)); } catch (_) {}
+    }
+  }
+
+  return {
+    success: true,
+    rideId: id,
+    estimatedPrice: estimate.estimatedPrice || '',
+    matchedDestination: estimate.matchedDestination || '',
+    estimateNote: estimate.note || '',
+    acSurcharge:0,
+    duplicate:false,
+    message: 'تم استلام طلبك بنجاح وسيتم التواصل معك هاتفيًا لتأكيد التفاصيل.'
+  };
+}
+
+function findRideByClientRequestIdV242_(sh, requestId) {
+  requestId = clean_(requestId);
+  if (!sh || !requestId || sh.getLastRow() < 2) return null;
+
+  const lastCol = sh.getLastColumn();
+  const headers = sh.getRange(1,1,1,lastCol).getDisplayValues()[0];
+  const requestCol = headers.indexOf('Client Request ID') + 1;
+  if (!requestCol) return null;
+
+  const match = sh.getRange(2,requestCol,sh.getLastRow()-1,1)
+    .createTextFinder(requestId)
+    .matchEntireCell(true)
+    .findNext();
+  if (!match) return null;
+
+  const row = sh.getRange(match.getRow(),1,1,lastCol).getValues()[0];
+  const get = function(header) {
+    const idx = headers.indexOf(header);
+    return idx >= 0 ? row[idx] : '';
+  };
+  return {
+    rideId:String(get('Ride ID') || ''),
+    estimatedPrice:get('Estimated Price') || ''
+  };
+}
+
+function queueRidePostSubmitV242_(item) {
+  const props = PropertiesService.getScriptProperties();
+  const rideId = clean_(item && item.rideId);
+  if (!rideId) return;
+
+  const queued = Object.assign({}, item || {}, {
+    rideId:rideId,
+    retryCount:Number((item && item.retryCount) || 0),
+    queuedAt:Date.now()
+  });
+  props.setProperty('MASHWARAK_POST_RIDE_' + rideId, JSON.stringify(queued));
+
+  // V5.2.3: keep ride acceptance independent from FCM, but make sure there is
+  // a persistent one-minute worker instead of relying on a fragile one-shot
+  // trigger for every request. If Apps Script needs a new authorization scope,
+  // this attempt may fail silently here; run setupMashwarakMonitorNotificationsV523()
+  // once from the editor to authorize/install it permanently.
+  try { ensureRidePostSubmitWorkerV523_(); } catch (triggerErr) {
+    try { log_('POST_SUBMIT_TRIGGER_ERROR','RIDE',rideId,String(triggerErr)); } catch (_) {}
+  }
+}
+
+function ensureRidePostSubmitWorkerV523_() {
+  const handler = 'processRidePostSubmitQueueV242_';
+  const triggers = ScriptApp.getProjectTriggers();
+  const exists = triggers.some(function(t){
+    return t.getHandlerFunction && t.getHandlerFunction() === handler;
+  });
+  if (exists) return true;
+
+  ScriptApp.newTrigger(handler)
+    .timeBased()
+    .everyMinutes(1)
+    .create();
+  return true;
+}
+
+// Kept for compatibility with V5.2.2 calls/backups.
+function scheduleRidePostSubmitV242_() {
+  return ensureRidePostSubmitWorkerV523_();
+}
+
+function processRidePostSubmitQueueV242_() {
+  const props = PropertiesService.getScriptProperties();
+  props.deleteProperty('MASHWARAK_POST_RIDE_TRIGGER_AT'); // stale V5.2.2 marker
+
+  const all = props.getProperties();
+  const keys = Object.keys(all)
+    .filter(function(k){ return k.indexOf('MASHWARAK_POST_RIDE_') === 0; })
+    .slice(0,30);
+
+  let sent = 0;
+  let retried = 0;
+  let dropped = 0;
+
+  keys.forEach(function(key){
+    let item = null;
+    try { item = JSON.parse(all[key] || '{}'); } catch (_) {}
+    if (!item || !item.rideId) {
+      props.deleteProperty(key);
+      dropped++;
+      return;
+    }
+
+    const when = item.when ? new Date(Number(item.when)) : new Date();
+    try {
+      upsertCustomerFromRide_(item.rideId, item.name, item.mobile, when);
+    } catch (customerErr) {
+      try { log_('CUSTOMER_UPSERT_ERROR','RIDE',item.rideId,String(customerErr)); } catch (_) {}
+      // Customer aggregation is secondary and must not prevent the alert.
+    }
+
+    try {
+      const pushResult = sendMashwarakAdminPush_(
+        'طلب مشوار جديد',
+        String(item.name || '') + ' | ' + String(item.from || '') + ' ← ' + String(item.to || ''),
+        'NEW_RIDE',
+        item.rideId
+      );
+      if (pushResult && pushResult.success) {
+        props.deleteProperty(key);
+        sent++;
+        try { log_('ADMIN_PUSH_SENT','RIDE',item.rideId,'monitor topic mashwarak_admin_all'); } catch (_) {}
+        return;
+      }
+      throw new Error((pushResult && pushResult.error) || 'FCM admin push not sent');
+    } catch (pushErr) {
+      item.retryCount = Number(item.retryCount || 0) + 1;
+      item.lastError = String(pushErr && pushErr.message ? pushErr.message : pushErr).slice(0,500);
+      item.lastAttemptAt = Date.now();
+
+      // Keep the queue item so a temporary Firebase/network error does not lose
+      // the monitor notification. Cap retries to avoid an eternal broken item.
+      if (item.retryCount >= 20) {
+        props.deleteProperty(key);
+        dropped++;
+        try { log_('ADMIN_PUSH_DROPPED','RIDE',item.rideId,item.lastError); } catch (_) {}
+      } else {
+        props.setProperty(key, JSON.stringify(item));
+        retried++;
+        try { log_('ADMIN_PUSH_RETRY','RIDE',item.rideId,'try=' + item.retryCount + ' | ' + item.lastError); } catch (_) {}
+      }
+    }
+  });
+
+  return {success:true,processed:keys.length,sent:sent,retried:retried,dropped:dropped};
+}
+
+/**
+ * Run ONCE manually from Apps Script after deploying V5.2.3.
+ * It authorizes/installs the persistent worker, flushes any rides that were
+ * queued by V5.2.2, and sends a direct test notification to the Monitor app.
+ */
+function setupMashwarakMonitorNotificationsV523() {
+  ensureReady_();
+  const props = PropertiesService.getScriptProperties();
+  const projectId = props.getProperty('MASHWARAK_FCM_PROJECT_ID');
+  const clientEmail = props.getProperty('MASHWARAK_FCM_CLIENT_EMAIL');
+  const privateKey = props.getProperty('MASHWARAK_FCM_PRIVATE_KEY');
+  if (!projectId || !clientEmail || !privateKey) {
+    throw new Error('بيانات Firebase Service Account غير مكتملة في Script Properties.');
+  }
+
+  // Remove obsolete duplicate workers, then create exactly one repeating worker.
+  const handler = 'processRidePostSubmitQueueV242_';
+  ScriptApp.getProjectTriggers().forEach(function(t){
+    if (t.getHandlerFunction && t.getHandlerFunction() === handler) {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+  ScriptApp.newTrigger(handler).timeBased().everyMinutes(1).create();
+  props.deleteProperty('MASHWARAK_POST_RIDE_TRIGGER_AT');
+
+  const flush = processRidePostSubmitQueueV242_();
+  const test = sendMashwarakAdminPush_(
+    'اختبار تطبيق إشعارات مشوارك',
+    'تم إصلاح مسار إشعارات المتابعة بنجاح.',
+    'MONITOR_TEST',
+    'TEST-' + Date.now()
+  );
+
+  return {
+    success:true,
+    version:APP.VERSION,
+    topic:'mashwarak_admin_all',
+    workerInstalled:true,
+    queueFlush:flush,
+    testPush:test
+  };
+}
+
+function testMashwarakAdminPushV523() {
+  ensureReady_();
+  return sendMashwarakAdminPush_(
+    'اختبار إشعارات الإدارة',
+    'لو ظهر هذا الإشعار فـ Firebase وتطبيق Monitor يعملان بشكل صحيح.',
+    'MONITOR_TEST',
+    'TEST-' + Date.now()
+  );
+}
+
+function getMashwarakMonitorDiagnosticsV523() {
+  const props = PropertiesService.getScriptProperties();
+  const queued = Object.keys(props.getProperties())
+    .filter(function(k){ return k.indexOf('MASHWARAK_POST_RIDE_') === 0; });
+  let workerCount = 0;
+  let triggerError = '';
+  try {
+    workerCount = ScriptApp.getProjectTriggers().filter(function(t){
+      return t.getHandlerFunction && t.getHandlerFunction() === 'processRidePostSubmitQueueV242_';
+    }).length;
+  } catch (e) {
+    triggerError = String(e && e.message ? e.message : e);
+  }
+  return {
+    version:APP.VERSION,
+    firebaseConfigured:!!(
+      props.getProperty('MASHWARAK_FCM_PROJECT_ID') &&
+      props.getProperty('MASHWARAK_FCM_CLIENT_EMAIL') &&
+      props.getProperty('MASHWARAK_FCM_PRIVATE_KEY')
+    ),
+    projectId:props.getProperty('MASHWARAK_FCM_PROJECT_ID') || '',
+    topic:'mashwarak_admin_all',
+    queuedRideAlerts:queued.length,
+    workerTriggers:workerCount,
+    triggerError:triggerError
+  };
+}
+
+function diagnoseRideSubmissionV242() {
+  const result = {
+    version:APP.VERSION,
+    ready:false,
+    db:false,
+    ridesSheet:false,
+    rows:0,
+    headers:[],
+    queuedPostSubmit:0
+  };
+
+  const props = PropertiesService.getScriptProperties();
+  result.ready = props.getProperty('MASHWARAK_READY') === '1';
+  const dbId = props.getProperty('MASHWARAK_DB_ID');
+  result.db = !!dbId;
+  if (!dbId) return result;
+
+  const ss = SpreadsheetApp.openById(dbId);
+  const sh = ss.getSheetByName(APP.SHEETS.RIDES);
+  result.ridesSheet = !!sh;
+  if (sh) {
+    result.rows = sh.getLastRow();
+    if (sh.getLastColumn()) result.headers = sh.getRange(1,1,1,sh.getLastColumn()).getDisplayValues()[0];
+  }
+  result.queuedPostSubmit = Object.keys(props.getProperties())
+    .filter(function(k){ return k.indexOf('MASHWARAK_POST_RIDE_') === 0; }).length;
+  return result;
+}
+
+/* =========================
+   DRIVER REGISTRATION
+========================= */
+
+function registerDriver(payload) {
+  ensureReady_();
+  payload = payload || {};
+
+  const name = clean_(payload.fullName);
+  const mobile = normalizePhone_(payload.mobile);
+  const city = clean_(payload.cityArea);
+  const carType = clean_(payload.carType);
+  const brandModel = clean_(payload.brandModel);
+  const year = clean_(payload.year);
+  const color = clean_(payload.color);
+  const seats = Math.max(1, Math.min(30, Number(payload.seats || 4)));
+  const acWorking = String(payload.acWorking || 'YES').toUpperCase() === 'NO' ? 'NO' : 'YES';
+  const availabilityType = String(payload.availabilityType || 'FULL_TIME').toUpperCase() === 'LIMITED' ? 'LIMITED' : 'FULL_TIME';
+  const availabilityDetails = clean_(payload.availabilityDetails);
+  const notes = clean_(payload.notes);
+  const termsAccepted = payload.termsAccepted === true || String(payload.termsAccepted).toUpperCase() === 'TRUE';
+  const documents = payload.documents || {};
+  const age = clean_(payload.age);
+  const brand = clean_(payload.brand);
+  const model = clean_(payload.model);
+
+  if (!name) throw new Error('اكتب الاسم بالكامل.');
+  if (mobile.length < 8) throw new Error('اكتب رقم موبايل / واتساب صحيح.');
+  if (!city) throw new Error('حدد المدينة أو المنطقة.');
+  if (!carType) throw new Error('حدد نوع السيارة.');
+  if (!brandModel) throw new Error('اكتب الماركة والموديل.');
+  if (!year) throw new Error('حدد سنة الصنع.');
+  if (!color) throw new Error('اكتب لون السيارة.');
+  if (availabilityType === 'LIMITED' && !availabilityDetails) {
+    throw new Error('اكتب مواعيد التوفر للمشاوير.');
+  }
+  if (!termsAccepted) throw new Error('يجب الموافقة على شروط وأحكام الكابتن.');
+  [
+    'nationalFront','nationalBack',
+    'driverLicenseFront','driverLicenseBack',
+    'carLicenseFront','carLicenseBack',
+    'liveSelfie','carPhoto','captainWithCar'
+  ].forEach(function(k) {
+    if (!documents[k] || !documents[k].data) {
+      throw new Error('جميع المستندات والصور مطلوبة ويجب تصويرها بالكاميرا.');
+    }
+  });
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.DRIVERS);
+  ensureNamedHeaders_(sh, [
+    'National ID Front URL','National ID Back URL',
+    'Driver License URL','Car License URL','Car Photo URL',
+    'Terms Accepted','Age','Brand','Model',
+    'Driver License Front URL','Driver License Back URL',
+    'Car License Front URL','Car License Back URL',
+    'Live Selfie URL','Captain With Car URL'
+  ]);
+
+  // Basic duplicate guard by mobile.
+  const rows = sh.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (normalizePhone_(rows[i][3]) === mobile) {
+      throw new Error('رقم الموبايل مسجل بالفعل. سيتم التواصل معك عند مراجعة البيانات.');
+    }
+  }
+
+  const id = nextId_('D', APP.SHEETS.DRIVERS);
+  const now = new Date();
+
+  const docUrls = saveCaptainDocuments_(id, name, documents);
+
+  appendDriverNamedRowV24_(sh, {
+    'Driver ID':id,'Created At':now,'Full Name':name,'Mobile WhatsApp':mobile,
+    'City Area':city,'Car Type':carType,'Brand Model':brandModel,'Year':year,
+    'Color':color,'Seats':seats,'AC Working':acWorking,
+    'Availability Type':availabilityType,'Availability Details':availabilityDetails,
+    'Notes':notes,'Admin Status':'UNDER_REVIEW','Admin Notes':'','Updated At':now,
+    'National ID Front URL':docUrls.nationalFront || '',
+    'National ID Back URL':docUrls.nationalBack || '',
+    'Driver License URL':docUrls.driverLicenseFront || '',
+    'Car License URL':docUrls.carLicenseFront || '',
+    'Car Photo URL':docUrls.carPhoto || '',
+    'Terms Accepted':termsAccepted,'Age':age,'Brand':brand,'Model':model,
+    'Driver License Front URL':docUrls.driverLicenseFront || '',
+    'Driver License Back URL':docUrls.driverLicenseBack || '',
+    'Car License Front URL':docUrls.carLicenseFront || '',
+    'Car License Back URL':docUrls.carLicenseBack || '',
+    'Live Selfie URL':docUrls.liveSelfie || '',
+    'Captain With Car URL':docUrls.captainWithCar || ''
+  });
+
+  log_('REGISTER_DRIVER', 'DRIVER', id, JSON.stringify({name:name,mobile:mobile}));
+  invalidateControlSnapshotV23_();
+  try {
+    sendMashwarakAdminPush_(
+      'تسجيل كابتن جديد',
+      name + ' | ' + mobile,
+      'NEW_DRIVER',
+      id
+    );
+  } catch (pushErr) {
+    log_('ADMIN_PUSH_ERROR','DRIVER',id,String(pushErr));
+  }
+
+  return {
+    success: true,
+    driverId: id,
+    message: 'تم تسجيل بيانات الكابتن بنجاح. شكرًا لانضمامك، وسيتم التواصل معك هاتفيًا لمراجعة البيانات والمستندات.'
+  };
+}
+
+/* =========================
+   ADMIN AUTH + DASHBOARD
+========================= */
+
+function adminLogin(pin) {
+  ensureReady_();
+  const expected = getSetting_('ADMIN_PIN_HASH');
+  if (!expected || hash_(String(pin || '')) !== expected) {
+    Utilities.sleep(250);
+    throw new Error('الرقم السري غير صحيح.');
+  }
+
+  const token = Utilities.getUuid();
+  CacheService.getScriptCache().put('ADMIN_' + token, '1', 21600);
+
+  // Keep login response deliberately simple and fully serializable.
+  // Dashboard data is loaded in a separate request after authentication.
+  return {
+    success: true,
+    token: String(token)
+  };
+}
+
+function getAdminDashboard(token) {
+  assertAdmin_(token);
+  return getAdminDashboard_(token);
+}
+
+
+function adminCellText_(v) {
+  if (v == null || v === '') return '';
+  if (v instanceof Date) {
+    return Utilities.formatDate(v, APP.TZ, 'yyyy-MM-dd');
+  }
+  return String(v);
+}
+
+function adminTimeText_(v) {
+  if (v == null || v === '') return '';
+  if (v instanceof Date) {
+    return Utilities.formatDate(v, APP.TZ, 'HH:mm');
+  }
+  return String(v);
+}
+
+function getAdminRides(token, filter) {
+  assertAdmin_(token);
+  filter = clean_(filter).toUpperCase() || 'ALL';
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.RIDES);
+  const values = sh.getDataRange().getValues();
+  const headers = values.length ? values[0].map(function(h){ return String(h || '').trim(); }) : [];
+  const acPreferenceIndex = headers.indexOf('Customer AC Preference');
+  const out = [];
+
+  for (let i = 1; i < values.length; i++) {
+    const r = values[i];
+    if (!r[0]) continue;
+
+    const status = String(r[15] || 'NEW').toUpperCase();
+    if (filter !== 'ALL' && status !== filter) continue;
+
+    out.push({
+      rideId: r[0],
+      createdAt: fmtDateTime_(r[1]),
+      customerName: r[2],
+      mobile: r[3],
+      tripType: r[4],
+      from: r[5],
+      to: r[6],
+      date: adminCellText_(r[7]),
+      time: adminTimeText_(r[8]),
+      passengers: r[9],
+      notes: r[10],
+      estimatedPrice: r[11],
+      finalPrice: r[12],
+      assignedDriverId: r[13],
+      assignedDriverName: r[14],
+      status: status,
+      adminNotes: r[16],
+      updatedAt: fmtDateTime_(r[17]),
+      returnDate: adminCellText_(r[18]),
+      returnTime: adminTimeText_(r[19]),
+      waiting: r[20],
+      waitingDetails: r[21],
+      termsAccepted: r[22],
+      extras: r[23],
+      captainAgePreference: r[24],
+      captainAgeMin: r[25],
+      captainAgeMax: r[26],
+      customerAcPreference: acPreferenceIndex >= 0 ? r[acPreferenceIndex] : ''
+    });
+  }
+
+  out.sort((a,b) => String(b.rideId).localeCompare(String(a.rideId)));
+  return out;
+}
+
+function getAdminDrivers(token, filter) {
+  assertAdmin_(token);
+  filter = clean_(filter).toUpperCase() || 'ALL';
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.DRIVERS);
+  const values = sh.getDataRange().getValues();
+  const out = [];
+
+  for (let i = 1; i < values.length; i++) {
+    const r = values[i];
+    if (!r[0]) continue;
+
+    const status = String(r[14] || 'UNDER_REVIEW').toUpperCase();
+    if (filter !== 'ALL' && status !== filter) continue;
+
+    out.push({
+      driverId: r[0],
+      createdAt: fmtDateTime_(r[1]),
+      fullName: r[2],
+      mobile: r[3],
+      cityArea: r[4],
+      carType: r[5],
+      brandModel: r[6],
+      year: r[7],
+      color: r[8],
+      seats: r[9],
+      acWorking: r[10],
+      availabilityType: r[11],
+      availabilityDetails: r[12],
+      notes: r[13],
+      adminStatus: status,
+      adminNotes: r[15],
+      updatedAt: fmtDateTime_(r[16]),
+      nationalIdFrontUrl: r[17],
+      nationalIdBackUrl: r[18],
+      driverLicenseUrl: r[19],
+      carLicenseUrl: r[20],
+      carPhotoUrl: r[21],
+      termsAccepted: r[22],
+      age: r[23],
+      brand: r[24],
+      model: r[25]
+    });
+  }
+
+  out.sort((a,b) => String(b.driverId).localeCompare(String(a.driverId)));
+  return out;
+}
+
+function updateDriverAdminStatus(token, driverId, status, adminNotes) {
+  assertAdmin_(token);
+  status = String(status || '').toUpperCase();
+
+  if (['UNDER_REVIEW','APPROVED','REJECTED','INACTIVE'].indexOf(status) === -1) {
+    throw new Error('حالة السائق غير صحيحة.');
+  }
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.DRIVERS);
+  const row = findRowById_(sh, driverId);
+  if (!row) throw new Error('السائق غير موجود.');
+
+  sh.getRange(row, 15).setValue(status);
+  sh.getRange(row, 16).setValue(clean_(adminNotes));
+  sh.getRange(row, 17).setValue(new Date());
+
+  log_('UPDATE_DRIVER_STATUS','DRIVER',driverId,status);
+
+  invalidateControlSnapshotV23_();
+  return { success:true };
+}
+
+function updateRide(token, payload) {
+  assertAdmin_(token);
+  payload = payload || {};
+
+  const rideId = clean_(payload.rideId);
+  const status = String(payload.status || '').toUpperCase();
+  const allowed = ['NEW','CONFIRMED','ASSIGNED','COMPLETED','CANCELLED'];
+
+  if (!rideId) throw new Error('رقم الرحلة غير موجود.');
+  if (allowed.indexOf(status) === -1) throw new Error('حالة الرحلة غير صحيحة.');
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.RIDES);
+  const row = findRowById_(sh, rideId);
+  if (!row) throw new Error('الرحلة غير موجودة.');
+
+  const driverId = clean_(payload.assignedDriverId);
+  let driverName = '';
+
+  if (driverId) {
+    const dsh = getDb_().getSheetByName(APP.SHEETS.DRIVERS);
+    const drow = findRowById_(dsh, driverId);
+    if (!drow) throw new Error('السائق المحدد غير موجود.');
+    driverName = dsh.getRange(drow, 3).getDisplayValue();
+  }
+
+  sh.getRange(row, 13).setValue(clean_(payload.finalPrice));
+  sh.getRange(row, 14).setValue(driverId);
+  sh.getRange(row, 15).setValue(driverName);
+  sh.getRange(row, 16).setValue(status);
+  sh.getRange(row, 17).setValue(clean_(payload.adminNotes));
+  sh.getRange(row, 18).setValue(new Date());
+
+  log_('UPDATE_RIDE','RIDE',rideId,JSON.stringify({status:status,driverId:driverId}));
+
+  invalidateControlSnapshotV23_();
+  return { success:true };
+}
+
+function getApprovedDrivers(token) {
+  assertAdmin_(token);
+  return getAdminDrivers(token, 'APPROVED');
+}
+
+
+
+
+/* =========================
+   ADMIN GENERAL SETTINGS
+========================= */
+
+function getAdminGeneralSettings(token) {
+  assertAdmin_(token);
+  const s = getSettings_();
+  return {
+    businessPhone: s.BUSINESS_PHONE || '+201098505030',
+    businessWhatsapp: s.BUSINESS_WHATSAPP || '',
+    primaryStartArea: s.PRIMARY_START_AREA || 'بركة السبع - المنوفية',
+    priceBaseArea: s.PRICE_BASE_AREA || 'بركة السبع - المنوفية'
+  };
+}
+
+function updateAdminGeneralSettings(token, payload) {
+  assertAdmin_(token);
+  payload = payload || {};
+
+  setSetting_('BUSINESS_PHONE', clean_(payload.businessPhone));
+  setSetting_('BUSINESS_WHATSAPP', clean_(payload.businessWhatsapp));
+  setSetting_('PRIMARY_START_AREA', clean_(payload.primaryStartArea));
+
+  log_(
+    'UPDATE_GENERAL_SETTINGS',
+    'SETTINGS',
+    '',
+    JSON.stringify({
+      businessPhone: clean_(payload.businessPhone),
+      businessWhatsapp: clean_(payload.businessWhatsapp),
+      primaryStartArea: clean_(payload.primaryStartArea)
+    })
+  );
+
+  return {success:true};
+}
+
+function setAdminNotificationActive(token, notificationId, active) {
+  assertAdmin_(token);
+  const sh = ensureNotificationsSheet_();
+  const row = findRowById_(sh, notificationId);
+  if (!row) throw new Error('الإشعار غير موجود.');
+
+  sh.getRange(row, 5).setValue(active === true || String(active).toUpperCase() === 'TRUE');
+  log_('UPDATE_NOTIFICATION','NOTIFICATION',notificationId,String(active));
+  return {success:true};
+}
+
+
+/* =========================
+   PUBLIC / ADMIN PRICES
+========================= */
+
+function ensurePricesSheet_() {
+  const ss = getDb_();
+  let sh = ss.getSheetByName(APP.SHEETS.PRICES);
+  if (!sh) {
+    sh = ss.insertSheet(APP.SHEETS.PRICES);
+    sh.getRange(1,1,1,9).setValues([[
+      'Price ID','Destination','Service Type','Price','Included Wait Minutes',
+      'Extra Wait Hour Price','Notes','Active','Updated At'
+    ]]);
+    formatSheet_(sh);
+  }
+  if (sh.getLastRow() < 2) seedInitialPrices_(sh);
+  return sh;
+}
+
+function seedInitialPrices_(sh) {
+  if (!sh || sh.getLastRow() >= 2) return;
+  const rows = [
+    {"destination": "مطار القاهرة الدولي", "serviceType": "توصيلة", "price": 1300, "wait": 60, "notes": "مطار"},
+    {"destination": "مطار سفنكس", "serviceType": "توصيلة", "price": 1500, "wait": 60, "notes": "مطار"},
+    {"destination": "مطار العاصمة", "serviceType": "توصيلة", "price": 1700, "wait": 60, "notes": "مطار"},
+    {"destination": "التجمع", "serviceType": "توصيلة", "price": 1400, "wait": 60, "notes": ""},
+    {"destination": "الرحاب", "serviceType": "توصيلة", "price": 1400, "wait": 60, "notes": ""},
+    {"destination": "كفر الشيخ", "serviceType": "توصيلة", "price": 1000, "wait": 60, "notes": ""},
+    {"destination": "مدينتي والشروق", "serviceType": "توصيلة", "price": 1400, "wait": 60, "notes": ""},
+    {"destination": "القاهرة وسط البلد", "serviceType": "توصيلة", "price": 1300, "wait": 60, "notes": ""},
+    {"destination": "حلوان", "serviceType": "توصيلة", "price": 1500, "wait": 60, "notes": ""},
+    {"destination": "المعادي", "serviceType": "توصيلة", "price": 1300, "wait": 60, "notes": ""},
+    {"destination": "6 أكتوبر", "serviceType": "توصيلة", "price": 1400, "wait": 60, "notes": ""},
+    {"destination": "الإسكندرية داخل", "serviceType": "توصيلة", "price": 1800, "wait": 60, "notes": ""},
+    {"destination": "الإسكندرية ك21", "serviceType": "توصيلة", "price": 2000, "wait": 60, "notes": ""},
+    {"destination": "دمياط", "serviceType": "يوم كامل", "price": 2800, "wait": 60, "notes": ""},
+    {"destination": "المنصورة", "serviceType": "توصيلة", "price": 1300, "wait": 60, "notes": ""},
+    {"destination": "المحلة", "serviceType": "توصيلة", "price": 800, "wait": 60, "notes": ""},
+    {"destination": "دمنهور", "serviceType": "توصيلة", "price": 1300, "wait": 60, "notes": ""},
+    {"destination": "رأس البر", "serviceType": "توصيلة", "price": 2000, "wait": 60, "notes": ""},
+    {"destination": "جمصة", "serviceType": "توصيلة", "price": 1700, "wait": 60, "notes": ""},
+    {"destination": "بلطيم", "serviceType": "توصيلة", "price": 1600, "wait": 60, "notes": ""},
+    {"destination": "السويس", "serviceType": "توصيلة", "price": 2200, "wait": 60, "notes": ""},
+    {"destination": "الإسماعيلية", "serviceType": "توصيلة", "price": 2000, "wait": 60, "notes": ""},
+    {"destination": "بورسعيد", "serviceType": "توصيلة", "price": 2500, "wait": 60, "notes": ""},
+    {"destination": "مارينا العلمين", "serviceType": "توصيلة", "price": 3000, "wait": 60, "notes": ""},
+    {"destination": "السخنة", "serviceType": "توصيلة", "price": 3000, "wait": 60, "notes": ""},
+    {"destination": "مطروح", "serviceType": "توصيلة", "price": 5500, "wait": 60, "notes": ""},
+    {"destination": "السادات", "serviceType": "توصيلة", "price": 1300, "wait": 60, "notes": ""},
+    {"destination": "العبور", "serviceType": "توصيلة", "price": 1300, "wait": 60, "notes": ""},
+    {"destination": "العاشر من رمضان", "serviceType": "توصيلة", "price": 1400, "wait": 60, "notes": ""},
+    {"destination": "الزقازيق", "serviceType": "توصيلة", "price": 1000, "wait": 60, "notes": ""},
+    {"destination": "طنطا", "serviceType": "توصيلة", "price": 350, "wait": 0, "notes": "بدون انتظار"},
+    {"destination": "شبين الكوم", "serviceType": "توصيلة", "price": 300, "wait": 0, "notes": "بدون انتظار"},
+    {"destination": "شنوان", "serviceType": "توصيلة", "price": 550, "wait": 60, "notes": ""},
+    {"destination": "الباجور", "serviceType": "توصيلة", "price": 700, "wait": 60, "notes": ""},
+    {"destination": "أشمون", "serviceType": "توصيلة", "price": 1100, "wait": 60, "notes": ""},
+    {"destination": "كفر الزيات", "serviceType": "توصيلة", "price": 650, "wait": 60, "notes": ""},
+    {"destination": "إيتاي البارود", "serviceType": "توصيلة", "price": 850, "wait": 60, "notes": ""},
+    {"destination": "كفر الدوار", "serviceType": "توصيلة", "price": 1550, "wait": 60, "notes": ""},
+    {"destination": "برج العرب", "serviceType": "توصيلة", "price": 2200, "wait": 60, "notes": ""},
+    {"destination": "سنتريس", "serviceType": "توصيلة", "price": 1100, "wait": 60, "notes": ""},
+    {"destination": "منيا القمح", "serviceType": "توصيلة", "price": 800, "wait": 60, "notes": ""},
+    {"destination": "زفتى", "serviceType": "توصيلة", "price": 400, "wait": 60, "notes": ""},
+    {"destination": "ميت حلفا", "serviceType": "توصيلة", "price": 750, "wait": 60, "notes": ""},
+    {"destination": "تلا", "serviceType": "توصيلة", "price": 500, "wait": 60, "notes": ""},
+    {"destination": "منوف", "serviceType": "توصيلة", "price": 800, "wait": 60, "notes": ""},
+    {"destination": "كفر كلا الباب", "serviceType": "توصيلة", "price": 250, "wait": 60, "notes": ""},
+    {"destination": "الصالحية الجديدة", "serviceType": "توصيلة", "price": 1800, "wait": 60, "notes": ""},
+    {"destination": "مصيف الإسكندرية", "serviceType": "مصيف", "price": 2500, "wait": 60, "notes": ""},
+    {"destination": "وادي النطرون", "serviceType": "توصيلة", "price": 1600, "wait": 60, "notes": ""},
+    {"destination": "الشهداء", "serviceType": "توصيلة", "price": 750, "wait": 60, "notes": ""},
+    {"destination": "بسيون", "serviceType": "توصيلة", "price": 1100, "wait": 60, "notes": ""},
+    {"destination": "شبين القناطر", "serviceType": "توصيلة", "price": 1000, "wait": 60, "notes": ""},
+    {"destination": "كوم حمادة", "serviceType": "توصيلة", "price": 1000, "wait": 60, "notes": ""},
+    {"destination": "فايد", "serviceType": "توصيلة", "price": 2000, "wait": 60, "notes": ""},
+    {"destination": "السنطة", "serviceType": "توصيلة", "price": 350, "wait": 60, "notes": ""},
+    {"destination": "طوخ قليوب", "serviceType": "توصيلة", "price": 750, "wait": 60, "notes": ""},
+    {"destination": "الهرم", "serviceType": "توصيلة", "price": 1500, "wait": 60, "notes": ""},
+    {"destination": "الحسين", "serviceType": "توصيلة", "price": 1300, "wait": 60, "notes": ""},
+    {"destination": "دهشور", "serviceType": "توصيلة", "price": 1700, "wait": 60, "notes": ""},
+    {"destination": "محلة أبو علي", "serviceType": "توصيلة", "price": 850, "wait": 60, "notes": ""},
+    {"destination": "التجمع الأول", "serviceType": "توصيلة", "price": 1500, "wait": 60, "notes": ""},
+    {"destination": "حدائق الأهرام", "serviceType": "توصيلة", "price": 1300, "wait": 60, "notes": ""},
+    {"destination": "القومية", "serviceType": "توصيلة", "price": 1200, "wait": 60, "notes": ""},
+    {"destination": "بني سويف", "serviceType": "توصيلة", "price": 3300, "wait": 60, "notes": ""},
+    {"destination": "الفيوم", "serviceType": "توصيلة", "price": 2500, "wait": 60, "notes": ""},
+    {"destination": "التل الكبير", "serviceType": "توصيلة", "price": 1800, "wait": 60, "notes": ""},
+    {"destination": "عين شمس", "serviceType": "توصيلة", "price": 1400, "wait": 60, "notes": ""},
+    {"destination": "طملاي", "serviceType": "توصيلة", "price": 750, "wait": 60, "notes": ""},
+    {"destination": "نشاظ", "serviceType": "توصيلة", "price": 1200, "wait": 60, "notes": ""},
+    {"destination": "أبو حمص", "serviceType": "توصيلة", "price": 1550, "wait": 60, "notes": ""},
+    {"destination": "المنيا", "serviceType": "توصيلة", "price": 4000, "wait": 60, "notes": ""},
+    {"destination": "ميت غمر", "serviceType": "توصيلة", "price": 500, "wait": 60, "notes": ""},
+    {"destination": "القنطرة", "serviceType": "توصيلة", "price": 2500, "wait": 60, "notes": ""},
+    {"destination": "دسوق", "serviceType": "توصيلة", "price": 1500, "wait": 60, "notes": ""},
+    {"destination": "القناطر الخيرية", "serviceType": "توصيلة", "price": 1300, "wait": 60, "notes": ""},
+    {"destination": "البتانون", "serviceType": "توصيلة", "price": 450, "wait": 60, "notes": ""},
+    {"destination": "قطور", "serviceType": "توصيلة", "price": 700, "wait": 60, "notes": ""},
+    {"destination": "مصر الجديدة", "serviceType": "توصيلة", "price": 1500, "wait": 60, "notes": ""},
+    {"destination": "كتما", "serviceType": "توصيلة", "price": 850, "wait": 60, "notes": ""},
+    {"destination": "سرس الليان", "serviceType": "توصيلة", "price": 850, "wait": 60, "notes": ""},
+    {"destination": "حدائق القبة", "serviceType": "توصيلة", "price": 1300, "wait": 60, "notes": ""},
+    {"destination": "بياض العرب", "serviceType": "توصيلة", "price": 3300, "wait": 60, "notes": ""}
+  ];
+  const values = rows.map(function(p,idx) {
+    return [
+      'P' + String(idx+1).padStart(4,'0'),
+      p.destination,
+      p.serviceType || 'توصيلة',
+      p.price,
+      p.wait == null ? 60 : p.wait,
+      75,
+      p.notes || '',
+      true,
+      new Date()
+    ];
+  });
+  if (values.length) sh.getRange(2,1,values.length,9).setValues(values);
+}
+
+function getPublicPriceConfig() {
+  ensureReady_();
+  ensurePricesSheet_();
+  const s = getSettings_();
+  return {
+    baseArea: s.PRICE_BASE_AREA || 'بركة السبع - المنوفية',
+    includedWaitMinutes: Number(s.INCLUDED_WAIT_MINUTES || 60),
+    extraWaitHourPrice: Number(s.EXTRA_WAIT_HOUR_PRICE || 75)
+  };
+}
+
+function getPublicPrices() {
+  ensureReady_();
+  const sh = ensurePricesSheet_();
+  if (sh.getLastRow() < 2) return [];
+  return sh.getRange(2,1,sh.getLastRow()-1,9).getValues()
+    .filter(function(r){ return r[0] && !(String(r[7]).toUpperCase()==='FALSE' || r[7]===false); })
+    .map(function(r){ return {
+      priceId:String(r[0]),
+      destination:String(r[1]||''),
+      serviceType:String(r[2]||'توصيلة'),
+      price:Number(r[3]||0),
+      includedWaitMinutes:Number(r[4]||0),
+      extraWaitHourPrice:Number(r[5]||75),
+      notes:String(r[6]||''),
+      active:true
+    }; });
+}
+
+function getAdminPriceConfig(token) {
+  assertAdmin_(token);
+  return getPublicPriceConfig();
+}
+
+function updateAdminPriceConfig(token,payload) {
+  assertAdmin_(token);
+  payload=payload||{};
+  const baseArea=clean_(payload.baseArea)||'بركة السبع - المنوفية';
+  const included=Math.max(0,Number(payload.includedWaitMinutes||0));
+  const extra=Math.max(0,Number(payload.extraWaitHourPrice||0));
+  setSetting_('PRICE_BASE_AREA',baseArea);
+  setSetting_('INCLUDED_WAIT_MINUTES',included);
+  setSetting_('EXTRA_WAIT_HOUR_PRICE',extra);
+  log_('UPDATE_PRICE_CONFIG','PRICE_CONFIG','',baseArea+' / '+included+' / '+extra);
+  return {success:true};
+}
+
+function getAdminPrices(token) {
+  assertAdmin_(token);
+  const sh=ensurePricesSheet_();
+  if (sh.getLastRow()<2) return [];
+  return sh.getRange(2,1,sh.getLastRow()-1,9).getValues().map(function(r){
+    return {
+      priceId:String(r[0]||''),
+      destination:String(r[1]||''),
+      serviceType:String(r[2]||'توصيلة'),
+      price:Number(r[3]||0),
+      includedWaitMinutes:Number(r[4]||0),
+      extraWaitHourPrice:Number(r[5]||75),
+      notes:String(r[6]||''),
+      active:!(String(r[7]).toUpperCase()==='FALSE' || r[7]===false),
+      updatedAt:fmtDateTime_(r[8])
+    };
+  });
+}
+
+function saveAdminPrice(token,payload) {
+  assertAdmin_(token);
+  payload=payload||{};
+  const sh=ensurePricesSheet_();
+  let id=clean_(payload.priceId);
+  const destination=clean_(payload.destination);
+  const serviceType=clean_(payload.serviceType)||'توصيلة';
+  const price=Number(payload.price||0);
+  const config=getPublicPriceConfig();
+  const wait=payload.includedWaitMinutes==null || payload.includedWaitMinutes==='' ?
+    config.includedWaitMinutes : Math.max(0,Number(payload.includedWaitMinutes));
+  const extra=payload.extraWaitHourPrice==null || payload.extraWaitHourPrice==='' ?
+    config.extraWaitHourPrice : Math.max(0,Number(payload.extraWaitHourPrice));
+  const notes=clean_(payload.notes);
+  const active=payload.active===false || String(payload.active).toUpperCase()==='FALSE' ? false : true;
+
+  if(!destination) throw new Error('اكتب الوجهة.');
+  if(!(price>0)) throw new Error('اكتب سعر صحيح.');
+
+  if(id){
+    const row=findRowById_(sh,id);
+    if(!row) throw new Error('السعر غير موجود.');
+    sh.getRange(row,1,1,9).setValues([[id,destination,serviceType,price,wait,extra,notes,active,new Date()]]);
+    log_('UPDATE_PRICE','PRICE',id,destination+' / '+price);
+  }else{
+    id=nextId_('P',APP.SHEETS.PRICES);
+    sh.appendRow([id,destination,serviceType,price,wait,extra,notes,active,new Date()]);
+    log_('CREATE_PRICE','PRICE',id,destination+' / '+price);
+  }
+  return {success:true,priceId:id};
+}
+
+
+/* =========================
+   PUBLIC / ADMIN NOTIFICATIONS
+========================= */
+
+function ensureNotificationsSheet_() {
+  const ss = getDb_();
+  let sh = ss.getSheetByName(APP.SHEETS.NOTIFICATIONS);
+  if (!sh) {
+    sh = ss.insertSheet(APP.SHEETS.NOTIFICATIONS);
+    sh.getRange(1,1,1,5).setValues([[
+      'Notification ID','Created At','Title','Message','Active'
+    ]]);
+    formatSheet_(sh);
+  }
+  return sh;
+}
+
+function getPublicNotifications() {
+  ensureReady_();
+  const sh = ensureNotificationsSheet_();
+  if (sh.getLastRow() < 2) return [];
+
+  const vals = sh.getRange(2,1,sh.getLastRow()-1,5).getValues();
+  return vals
+    .filter(r => r[0] && String(r[4]).toUpperCase() !== 'FALSE' && r[4] !== false)
+    .map(r => ({
+      id: r[0],
+      createdAt: fmtDateTime_(r[1]),
+      title: r[2],
+      message: r[3],
+      active: true
+    }))
+    .reverse()
+    .slice(0,20);
+}
+
+function getAdminNotifications(token) {
+  assertAdmin_(token);
+  const sh = ensureNotificationsSheet_();
+  if (sh.getLastRow() < 2) return [];
+
+  const vals = sh.getRange(2,1,sh.getLastRow()-1,5).getValues();
+  return vals.map(r => ({
+    id: r[0],
+    createdAt: fmtDateTime_(r[1]),
+    title: r[2],
+    message: r[3],
+    active: !(String(r[4]).toUpperCase() === 'FALSE' || r[4] === false)
+  })).reverse().slice(0,50);
+}
+
+function createAdminNotification(token, title, message) {
+  assertAdmin_(token);
+  title = clean_(title);
+  message = clean_(message);
+
+  if (!title) throw new Error('اكتب عنوان الإشعار.');
+  if (!message) throw new Error('اكتب نص الإشعار.');
+
+  const sh = ensureNotificationsSheet_();
+  const id = nextId_('N', APP.SHEETS.NOTIFICATIONS);
+  sh.appendRow([id,new Date(),title,message,true]);
+
+  let pushSent = false;
+  let pushError = '';
+
+  try {
+    const pushResult = sendMashwarakPush_(title, message, id);
+    pushSent = !!(pushResult && pushResult.success);
+    if (pushResult && pushResult.error) pushError = pushResult.error;
+  } catch (e) {
+    pushError = e && e.message ? e.message : String(e);
+  }
+
+  log_('CREATE_NOTIFICATION','NOTIFICATION',id,title + ' | push=' + pushSent);
+
+  return {
+    success:true,
+    id:id,
+    pushSent:pushSent,
+    pushError:pushError
+  };
+}
+
+
+
+
+/* =========================
+   FIREBASE CLOUD MESSAGING
+   Android topic: mashwarak_all
+========================= */
+
+/**
+ * Run once from Apps Script editor after creating the Firebase service account.
+ *
+ * Example:
+ * configureMashwarakFirebase(
+ *   'your-project-id',
+ *   'firebase-adminsdk-xxxx@your-project-id.iam.gserviceaccount.com',
+ *   '-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n'
+ * );
+ */
+function configureMashwarakFirebase(projectId, clientEmail, privateKey) {
+  projectId = clean_(projectId);
+  clientEmail = clean_(clientEmail);
+  privateKey = String(privateKey || '').trim();
+
+  if (!projectId) throw new Error('Firebase Project ID غير موجود.');
+  if (!clientEmail || clientEmail.indexOf('@') === -1) {
+    throw new Error('Firebase Client Email غير صحيح.');
+  }
+  if (privateKey.indexOf('BEGIN PRIVATE KEY') === -1) {
+    throw new Error('Firebase Private Key غير صحيح.');
+  }
+
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty('MASHWARAK_FCM_PROJECT_ID', projectId);
+  props.setProperty('MASHWARAK_FCM_CLIENT_EMAIL', clientEmail);
+  props.setProperty('MASHWARAK_FCM_PRIVATE_KEY', privateKey.replace(/\\n/g, '\n'));
+
+  CacheService.getScriptCache().remove('MASHWARAK_FCM_ACCESS_TOKEN');
+  return {success:true};
+}
+
+function clearMashwarakFirebaseConfig() {
+  const props = PropertiesService.getScriptProperties();
+  [
+    'MASHWARAK_FCM_PROJECT_ID',
+    'MASHWARAK_FCM_CLIENT_EMAIL',
+    'MASHWARAK_FCM_PRIVATE_KEY'
+  ].forEach(function(k){ props.deleteProperty(k); });
+
+  CacheService.getScriptCache().remove('MASHWARAK_FCM_ACCESS_TOKEN');
+  return {success:true};
+}
+
+function getMashwarakFirebaseStatus() {
+  const props = PropertiesService.getScriptProperties();
+  return {
+    configured: !!(
+      props.getProperty('MASHWARAK_FCM_PROJECT_ID') &&
+      props.getProperty('MASHWARAK_FCM_CLIENT_EMAIL') &&
+      props.getProperty('MASHWARAK_FCM_PRIVATE_KEY')
+    ),
+    projectId: props.getProperty('MASHWARAK_FCM_PROJECT_ID') || '',
+    topic: 'mashwarak_all'
+  };
+}
+
+function sendMashwarakPush_(title, message, notificationId) {
+  const props = PropertiesService.getScriptProperties();
+  const projectId = props.getProperty('MASHWARAK_FCM_PROJECT_ID');
+
+  if (!projectId) {
+    return {
+      success:false,
+      skipped:true,
+      error:'Firebase غير مهيأ بعد.'
+    };
+  }
+
+  const accessToken = getMashwarakFcmAccessToken_();
+  const url = 'https://fcm.googleapis.com/v1/projects/' +
+    encodeURIComponent(projectId) + '/messages:send';
+
+  const payload = {
+    message: {
+      topic: 'mashwarak_all',
+      data: {
+        title: String(title || 'مشوارك'),
+        message: String(message || ''),
+        notificationId: String(notificationId || '')
+      },
+      android: {
+        priority: 'HIGH'
+      }
+    }
+  };
+
+  const res = UrlFetchApp.fetch(url, {
+    method:'post',
+    contentType:'application/json',
+    payload:JSON.stringify(payload),
+    headers:{
+      Authorization:'Bearer ' + accessToken
+    },
+    muteHttpExceptions:true
+  });
+
+  const status = res.getResponseCode();
+  const body = res.getContentText();
+
+  if (status < 200 || status >= 300) {
+    throw new Error('تعذر إرسال Push. FCM HTTP ' + status + ': ' + body.slice(0,500));
+  }
+
+  return {success:true,response:body};
+}
+
+function getMashwarakFcmAccessToken_() {
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get('MASHWARAK_FCM_ACCESS_TOKEN');
+  if (cached) return cached;
+
+  const props = PropertiesService.getScriptProperties();
+  const clientEmail = props.getProperty('MASHWARAK_FCM_CLIENT_EMAIL');
+  const privateKey = props.getProperty('MASHWARAK_FCM_PRIVATE_KEY');
+
+  if (!clientEmail || !privateKey) {
+    throw new Error('بيانات Firebase Service Account غير مكتملة.');
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const header = {
+    alg:'RS256',
+    typ:'JWT'
+  };
+  const claim = {
+    iss:clientEmail,
+    scope:'https://www.googleapis.com/auth/firebase.messaging',
+    aud:'https://oauth2.googleapis.com/token',
+    iat:now,
+    exp:now + 3600
+  };
+
+  const encodedHeader = base64UrlJson_(header);
+  const encodedClaim = base64UrlJson_(claim);
+  const unsignedJwt = encodedHeader + '.' + encodedClaim;
+
+  const signature = Utilities.computeRsaSha256Signature(
+    unsignedJwt,
+    privateKey
+  );
+
+  const jwt = unsignedJwt + '.' + Utilities.base64EncodeWebSafe(signature)
+    .replace(/=+$/,'');
+
+  const tokenRes = UrlFetchApp.fetch('https://oauth2.googleapis.com/token', {
+    method:'post',
+    contentType:'application/x-www-form-urlencoded',
+    payload:{
+      grant_type:'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion:jwt
+    },
+    muteHttpExceptions:true
+  });
+
+  const status = tokenRes.getResponseCode();
+  const body = tokenRes.getContentText();
+
+  if (status < 200 || status >= 300) {
+    throw new Error('تعذر الحصول على Firebase access token. HTTP ' + status + ': ' + body.slice(0,500));
+  }
+
+  const parsed = JSON.parse(body);
+  const token = parsed.access_token;
+  if (!token) throw new Error('Firebase access token غير موجود في الاستجابة.');
+
+  cache.put('MASHWARAK_FCM_ACCESS_TOKEN', token, 3300);
+  return token;
+}
+
+function base64UrlJson_(obj) {
+  return Utilities.base64EncodeWebSafe(
+    Utilities.newBlob(JSON.stringify(obj)).getBytes()
+  ).replace(/=+$/,'');
+}
+
+
+/* =========================
+   CAPTAIN DOCUMENT STORAGE + HEADER MIGRATION
+========================= */
+
+function ensureNamedHeaders_(sh, names) {
+  if (!sh) return;
+  const lastCol = Math.max(1, sh.getLastColumn());
+  const current = sh.getRange(1,1,1,lastCol).getDisplayValues()[0];
+  names.forEach(function(name) {
+    if (current.indexOf(name) === -1) {
+      sh.getRange(1, sh.getLastColumn() + 1).setValue(name);
+      current.push(name);
+    }
+  });
+  sh.setFrozenRows(1);
+}
+
+function appendRideNamedRowV26_(sh, valuesByHeader) {
+  const lastCol = sh.getLastColumn();
+  const headers = sh.getRange(1,1,1,lastCol).getDisplayValues()[0];
+  const row = new Array(lastCol).fill('');
+
+  headers.forEach(function(header, i){
+    if (Object.prototype.hasOwnProperty.call(valuesByHeader, header)) {
+      row[i] = valuesByHeader[header];
+    }
+  });
+
+  sh.appendRow(row);
+}
+
+function appendDriverNamedRowV24_(sh, valuesByHeader) {
+  const lastCol = sh.getLastColumn();
+  const headers = sh.getRange(1,1,1,lastCol).getDisplayValues()[0];
+  const row = new Array(lastCol).fill('');
+  headers.forEach(function(header, i){
+    if (Object.prototype.hasOwnProperty.call(valuesByHeader, header)) {
+      row[i] = valuesByHeader[header];
+    }
+  });
+  sh.appendRow(row);
+}
+
+function getCaptainDocsRoot_() {
+  const props = PropertiesService.getScriptProperties();
+  const stored = props.getProperty('MASHWARAK_CAPTAIN_DOCS_FOLDER_ID');
+  if (stored) {
+    try { return DriveApp.getFolderById(stored); } catch (e) {}
+  }
+  const root = DriveApp.createFolder('Mashwarak - Captain Documents');
+  props.setProperty('MASHWARAK_CAPTAIN_DOCS_FOLDER_ID', root.getId());
+  return root;
+}
+
+function saveCaptainDocuments_(driverId, captainName, documents) {
+  const root = getCaptainDocsRoot_();
+  const safeName = clean_(captainName).replace(/[\\/:*?"<>|]/g,' ').slice(0,60);
+  const folder = root.createFolder(driverId + ' - ' + safeName);
+  const labels = {
+    nationalFront:'national-id-front',
+    nationalBack:'national-id-back',
+    driverLicenseFront:'driver-license-front',
+    driverLicenseBack:'driver-license-back',
+    carLicenseFront:'car-license-front',
+    carLicenseBack:'car-license-back',
+    liveSelfie:'live-selfie',
+    carPhoto:'car-photo',
+    captainWithCar:'captain-with-car'
+  };
+  const out = {};
+
+  Object.keys(labels).forEach(function(key) {
+    const item = documents[key];
+    if (!item || !item.data) throw new Error('مستند ناقص: ' + key);
+
+    const mime = clean_(item.mimeType) || 'image/jpeg';
+    if (['image/jpeg','image/png','image/webp'].indexOf(mime) === -1) {
+      throw new Error('نوع ملف غير مدعوم. ارفع صورة JPG أو PNG أو WEBP.');
+    }
+
+    const bytes = Utilities.base64Decode(String(item.data));
+    if (bytes.length > 3 * 1024 * 1024) {
+      throw new Error('إحدى الصور أكبر من الحد المسموح بعد الضغط.');
+    }
+
+    const ext = mime === 'image/png' ? '.png' : mime === 'image/webp' ? '.webp' : '.jpg';
+    const blob = Utilities.newBlob(bytes, mime, labels[key] + ext);
+    const f = folder.createFile(blob);
+    out[key] = f.getUrl();
+  });
+
+  return out;
+}
+
+
+/* =========================
+   INTERNAL HELPERS
+========================= */
+
+function getAdminDashboard_(token) {
+  assertAdmin_(token);
+
+  const rides = getDb_().getSheetByName(APP.SHEETS.RIDES).getDataRange().getValues();
+  const drivers = getDb_().getSheetByName(APP.SHEETS.DRIVERS).getDataRange().getValues();
+
+  const stats = {
+    totalRides: 0,
+    newRides: 0,
+    confirmed: 0,
+    assigned: 0,
+    completed: 0,
+    cancelled: 0,
+    drivers: 0,
+    driversUnderReview: 0,
+    approvedDrivers: 0
+  };
+
+  for (let i = 1; i < rides.length; i++) {
+    if (!rides[i][0]) continue;
+    stats.totalRides++;
+    const s = String(rides[i][15] || 'NEW').toUpperCase();
+    if (s === 'NEW') stats.newRides++;
+    if (s === 'CONFIRMED') stats.confirmed++;
+    if (s === 'ASSIGNED') stats.assigned++;
+    if (s === 'COMPLETED') stats.completed++;
+    if (s === 'CANCELLED') stats.cancelled++;
+  }
+
+  for (let i = 1; i < drivers.length; i++) {
+    if (!drivers[i][0]) continue;
+    stats.drivers++;
+    const s = String(drivers[i][14] || 'UNDER_REVIEW').toUpperCase();
+    if (s === 'UNDER_REVIEW') stats.driversUnderReview++;
+    if (s === 'APPROVED') stats.approvedDrivers++;
+  }
+
+  return {
+    stats: stats,
+    recentRides: getAdminRides(token, 'ALL').slice(0, 8),
+    recentDrivers: getAdminDrivers(token, 'ALL').slice(0, 8)
+  };
+}
+
+function assertAdmin_(token) {
+  if (!token || CacheService.getScriptCache().get('ADMIN_' + token) !== '1') {
+    throw new Error('انتهت جلسة الإدارة. سجل الدخول مرة أخرى.');
+  }
+}
+
+function ensureReady_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('MASHWARAK_READY') !== '1') {
+    throw new Error('النظام لم يتم تجهيزه بعد. شغّل setupSystem() مرة واحدة من Apps Script.');
+  }
+}
+
+function getDb_() {
+  const id = PropertiesService.getScriptProperties().getProperty('MASHWARAK_DB_ID');
+  if (!id) throw new Error('قاعدة البيانات غير مهيأة.');
+  return SpreadsheetApp.openById(id);
+}
+
+function createOrResetHeaders_(ss, name, headers) {
+  let sh = ss.getSheetByName(name);
+  if (!sh) sh = ss.insertSheet(name);
+
+  if (sh.getLastRow() === 0) {
+    sh.getRange(1,1,1,headers.length).setValues([headers]);
+  } else {
+    const existing = sh.getRange(1,1,1,Math.max(headers.length, sh.getLastColumn())).getValues()[0];
+    for (let i = 0; i < headers.length; i++) {
+      if (!existing[i]) sh.getRange(1,i+1).setValue(headers[i]);
+    }
+  }
+
+  sh.setFrozenRows(1);
+}
+
+function formatSheet_(sh) {
+  const lastCol = Math.max(1, sh.getLastColumn());
+  sh.getRange(1,1,1,lastCol)
+    .setFontWeight('bold')
+    .setBackground('#073B55')
+    .setFontColor('#FFFFFF');
+  sh.setFrozenRows(1);
+}
+
+function nextId_(prefix, sheetName) {
+  const props = PropertiesService.getScriptProperties();
+  const key = 'SEQ_' + sheetName;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    let n = Number(props.getProperty(key) || 0) + 1;
+    props.setProperty(key, String(n));
+    const y = Utilities.formatDate(new Date(), APP.TZ, 'yy');
+    return prefix + y + '-' + String(n).padStart(4,'0');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function findRowById_(sh, id) {
+  id = clean_(id);
+  if (!id || sh.getLastRow() < 2) return 0;
+
+  const vals = sh.getRange(2,1,sh.getLastRow()-1,1).getDisplayValues();
+  for (let i = 0; i < vals.length; i++) {
+    if (String(vals[i][0]).trim() === id) return i + 2;
+  }
+  return 0;
+}
+
+function normalizePhone_(v) {
+  return String(v || '').replace(/[^\d+]/g,'').trim();
+}
+
+function clean_(v) {
+  return String(v == null ? '' : v).trim();
+}
+
+function hash_(value) {
+  const bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    String(value || ''),
+    Utilities.Charset.UTF_8
+  );
+  return bytes.map(b => ('0' + (b & 255).toString(16)).slice(-2)).join('');
+}
+
+function getSettings_() {
+  const sh = getDb_().getSheetByName(APP.SHEETS.SETTINGS);
+  const vals = sh.getDataRange().getValues();
+  const out = {};
+  for (let i = 1; i < vals.length; i++) {
+    if (vals[i][0]) out[String(vals[i][0])] = vals[i][1];
+  }
+  return out;
+}
+
+function getSetting_(key) {
+  return getSettings_()[key];
+}
+
+function setSetting_(key, value) {
+  const sh = getDb_().getSheetByName(APP.SHEETS.SETTINGS);
+  const vals = sh.getDataRange().getValues();
+
+  for (let i = 1; i < vals.length; i++) {
+    if (String(vals[i][0]) === key) {
+      sh.getRange(i+1,2).setValue(value);
+      return;
+    }
+  }
+  sh.appendRow([key,value,'']);
+}
+
+function seedSetting_(sh, key, value, notes) {
+  const vals = sh.getDataRange().getValues();
+  for (let i = 1; i < vals.length; i++) {
+    if (String(vals[i][0]) === key) return;
+  }
+  sh.appendRow([key,value,notes]);
+}
+
+function log_(action, entityType, entityId, details) {
+  try {
+    getDb_().getSheetByName(APP.SHEETS.LOGS)
+      .appendRow([new Date(), action, entityType, entityId, details || '']);
+  } catch (e) {}
+}
+
+function fmtDateTime_(v) {
+  if (!v) return '';
+  try {
+    const d = v instanceof Date ? v : new Date(v);
+    return Utilities.formatDate(d, APP.TZ, 'yyyy-MM-dd HH:mm');
+  } catch (e) {
+    return String(v);
+  }
+}
+
+
+/* =========================
+   FIREBASE TEST
+   Run manually after setupMashwarakFirebaseNow()
+========================= */
+function testMashwarakPush() {
+  const status = getMashwarakFirebaseStatus();
+  if (!status || !status.configured) {
+    throw new Error('Firebase غير مهيأ. شغّل setupMashwarakFirebaseNow أولاً.');
+  }
+
+  const testId = 'TEST-' + new Date().getTime();
+  const result = sendMashwarakPush_(
+    'اختبار إشعارات مشوارك',
+    'لو وصلك الإشعار ده بصوت واهتزاز يبقى Firebase شغال بنجاح.',
+    testId
+  );
+
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
+
+/* ==========================================================
+   MASHWARAK CONTROL CENTER V2
+   Multi-user admin | customers | accounting | admin push
+========================================================== */
+
+function upgradeMashwarakControlCenterV2() {
+  ensureReady_();
+  const ss = getDb_();
+
+  ensureSheetWithHeadersV2_(ss, APP.SHEETS.ADMIN_USERS, [
+    'User ID','Name','Username','Password Hash','Role','Active',
+    'Created At','Last Login','Phone','Notes'
+  ]);
+
+  ensureSheetWithHeadersV2_(ss, APP.SHEETS.CUSTOMERS, [
+    'Customer ID','Name','Mobile','Created At','Last Ride At',
+    'Total Rides','Completed Rides','Cancelled Rides','Admin Notes','Active'
+  ]);
+
+  ensureSheetWithHeadersV2_(ss, APP.SHEETS.TRANSACTIONS, [
+    'Transaction ID','Created At','Ride ID','Customer Mobile','Driver ID',
+    'Type','Direction','Amount','Payment Method','Status','Reference',
+    'Notes','Created By User ID','Created By Name'
+  ]);
+
+  PropertiesService.getScriptProperties().setProperty('MASHWARAK_CONTROL_V2_READY','1');
+
+  return {
+    success:true,
+    message:'تم تجهيز مركز التحكم V2 بدون حذف أو إعادة ضبط أي بيانات حالية.'
+  };
+}
+
+function ensureControlV2Ready_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('MASHWARAK_CONTROL_V2_READY') === '1') return;
+  upgradeMashwarakControlCenterV2();
+}
+
+function ensureSheetWithHeadersV2_(ss, name, headers) {
+  let sh = ss.getSheetByName(name);
+  if (!sh) sh = ss.insertSheet(name);
+
+  if (sh.getLastRow() === 0) {
+    sh.getRange(1,1,1,headers.length).setValues([headers]);
+    formatSheet_(sh);
+    return sh;
+  }
+
+  ensureNamedHeaders_(sh, headers);
+  return sh;
+}
+
+function setupControlCenterOwner(name, username, password) {
+  upgradeMashwarakControlCenterV2();
+
+  name = clean_(name) || 'Owner';
+  username = clean_(username).toLowerCase();
+  password = String(password || '');
+
+  if (!/^[a-zA-Z0-9._-]{3,30}$/.test(username)) {
+    throw new Error('اسم المستخدم يجب أن يكون 3 أحرف على الأقل وبالإنجليزية أو أرقام.');
+  }
+  if (password.length < 6) {
+    throw new Error('كلمة المرور يجب ألا تقل عن 6 أحرف.');
+  }
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.ADMIN_USERS);
+  const values = sh.getDataRange().getValues();
+
+  for (let i=1;i<values.length;i++) {
+    if (String(values[i][2] || '').toLowerCase() === username) {
+      sh.getRange(i+1,2).setValue(name);
+      sh.getRange(i+1,4).setValue(hash_(password));
+      sh.getRange(i+1,5).setValue('OWNER');
+      sh.getRange(i+1,6).setValue(true);
+      return {success:true, updated:true, username:username};
+    }
+  }
+
+  const id = nextSimpleIdV2_('U', sh);
+  sh.appendRow([
+    id,name,username,hash_(password),'OWNER',true,
+    new Date(),'','',''
+  ]);
+
+  return {success:true, created:true, userId:id, username:username};
+}
+
+function controlLogin(username, password) {
+  ensureControlV2Ready_();
+
+  username = clean_(username).toLowerCase();
+  password = String(password || '');
+  const sh = getDb_().getSheetByName(APP.SHEETS.ADMIN_USERS);
+  const values = sh.getDataRange().getValues();
+
+  for (let i=1;i<values.length;i++) {
+    const r = values[i];
+    if (String(r[2] || '').toLowerCase() !== username) continue;
+    if (!(r[5] === true || String(r[5]).toUpperCase() === 'TRUE')) {
+      throw new Error('الحساب غير نشط.');
+    }
+    if (String(r[3] || '') !== hash_(password)) {
+      Utilities.sleep(250);
+      throw new Error('اسم المستخدم أو كلمة المرور غير صحيحة.');
+    }
+
+    const user = {
+      userId:String(r[0]),
+      name:String(r[1] || ''),
+      username:String(r[2] || ''),
+      role:String(r[4] || 'VIEWER').toUpperCase()
+    };
+
+    const token = Utilities.getUuid();
+    CacheService.getScriptCache().put(
+      'CONTROL_' + token,
+      JSON.stringify(user),
+      21600
+    );
+    sh.getRange(i+1,8).setValue(new Date());
+    logControlAction_(user,'LOGIN','USER',user.userId,'Control Center');
+
+    return {success:true,token:String(token),user:user};
+  }
+
+  Utilities.sleep(250);
+  throw new Error('اسم المستخدم أو كلمة المرور غير صحيحة.');
+}
+
+function controlLogout(token) {
+  if (token) CacheService.getScriptCache().remove('CONTROL_' + String(token));
+  return {success:true};
+}
+
+function getControlUser_(token) {
+  token = String(token || '').trim();
+  if (!token) throw new Error('انتهت الجلسة. سجل الدخول مرة أخرى.');
+
+  const raw = CacheService.getScriptCache().get('CONTROL_' + token);
+  if (!raw) throw new Error('انتهت الجلسة. سجل الدخول مرة أخرى.');
+
+  let user;
+  try { user = JSON.parse(raw); } catch(e) {}
+  if (!user || !user.userId) throw new Error('جلسة غير صالحة.');
+
+  CacheService.getScriptCache().put('CONTROL_' + token, JSON.stringify(user), 21600);
+  return user;
+}
+
+function assertControlRole_(token, allowedRoles) {
+  const user = getControlUser_(token);
+  const allowed = allowedRoles || [];
+  if (allowed.length && allowed.indexOf(user.role) === -1 && user.role !== 'OWNER') {
+    throw new Error('ليس لديك صلاحية لتنفيذ هذا الإجراء.');
+  }
+  return user;
+}
+
+
+/**
+ * Lightweight operational alert feed.
+ * Reads only the tail of RideRequests and Drivers, instead of loading
+ * the full Control Center snapshot every 15 seconds.
+ */
+function getControlAlertFeedV27(token) {
+  getControlUser_(token);
+
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'CONTROL_ALERT_FEED_V27';
+  const cached = cache.get(cacheKey);
+
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      parsed.success = true;
+      parsed.cached = true;
+      return parsed;
+    } catch(e) {}
+  }
+
+  const ss = getDb_();
+
+  const rides = getControlAlertTailV27_(
+    ss.getSheetByName(APP.SHEETS.RIDES),
+    20,
+    function(r){
+      return {
+        rideId:String(r[0] || ''),
+        createdAt:formatAlertValueV27_(r[1]),
+        customerName:String(r[2] || ''),
+        mobile:String(r[3] || ''),
+        from:String(r[5] || ''),
+        to:String(r[6] || ''),
+        status:String(r[15] || 'NEW').toUpperCase()
+      };
+    }
+  );
+
+  const drivers = getControlAlertTailV27_(
+    ss.getSheetByName(APP.SHEETS.DRIVERS),
+    20,
+    function(r){
+      return {
+        driverId:String(r[0] || ''),
+        createdAt:formatAlertValueV27_(r[1]),
+        fullName:String(r[2] || ''),
+        mobile:String(r[3] || ''),
+        cityArea:String(r[4] || ''),
+        adminStatus:String(r[14] || 'UNDER_REVIEW').toUpperCase()
+      };
+    }
+  );
+
+  const out = {
+    success:true,
+    cached:false,
+    dataEpoch:dataEpochV53_(),
+    rides:rides,
+    drivers:drivers,
+    checkedAt:Utilities.formatDate(new Date(), APP.TZ, 'yyyy-MM-dd HH:mm:ss')
+  };
+
+  try {
+    cache.put(cacheKey, JSON.stringify(out), 6);
+  } catch(e) {}
+
+  return out;
+}
+
+function getControlAlertTailV27_(sh, limit, mapper) {
+  if (!sh) return [];
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return [];
+
+  const lastCol = sh.getLastColumn();
+  const count = Math.min(Math.max(1, Number(limit || 20)), lastRow - 1);
+  const startRow = Math.max(2, lastRow - count + 1);
+
+  const rows = sh.getRange(startRow, 1, count, lastCol).getValues();
+  const out = [];
+
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const item = mapper(rows[i]);
+
+    if (
+      (item.rideId && String(item.rideId).trim()) ||
+      (item.driverId && String(item.driverId).trim())
+    ) {
+      out.push(item);
+    }
+  }
+
+  return out;
+}
+
+function formatAlertValueV27_(value) {
+  if (value instanceof Date) {
+    return Utilities.formatDate(value, APP.TZ, 'yyyy-MM-dd HH:mm:ss');
+  }
+  return String(value || '');
+}
+
+
+function getControlBootstrap(token) {
+  const user = getControlUser_(token);
+  const dashboard = getControlDashboard(token);
+  return {
+    success:true,
+    dataEpoch:dataEpochV53_(),
+    user:user,
+    dashboard:dashboard,
+    roles:['OWNER','OPERATIONS','ACCOUNTS','REVIEWER','VIEWER']
+  };
+}
+
+
+function getControlHome(token) {
+  getControlUser_(token);
+  const dashboard = getControlDashboard(token);
+  const rides = getControlRides(token,{status:'ALL',q:''}).slice(0,12);
+  return {dashboard:dashboard, rides:rides};
+}
+
+function getControlDashboard(token) {
+  getControlUser_(token);
+  ensureControlV2Ready_();
+
+  const rides = getAdminRidesLegacyForV2_();
+  const drivers = getAdminDriversLegacyForV2_();
+  const tx = getTransactionsRawV2_();
+
+  const today = Utilities.formatDate(new Date(), APP.TZ, 'yyyy-MM-dd');
+  const commissionAccounts = calculateAllDriverCommissionAccountsV51_(rides,tx);
+
+  let commissionCollectedToday = 0;
+  let expensesToday = 0;
+  let legacyDriverPaidToday = 0;
+
+  tx.forEach(function(t){
+    if (t.status !== 'CONFIRMED' || t.createdDate !== today) return;
+
+    if (
+      t.type === 'DRIVER_COMMISSION_PAYMENT' &&
+      t.direction === 'IN'
+    ) {
+      commissionCollectedToday += Number(t.amount || 0);
+    } else if (
+      t.type === 'EXPENSE' &&
+      t.direction === 'OUT'
+    ) {
+      expensesToday += Number(t.amount || 0);
+    } else if (
+      t.type === 'DRIVER_PAYMENT' &&
+      t.direction === 'OUT'
+    ) {
+      legacyDriverPaidToday += Number(t.amount || 0);
+    }
+  });
+
+  const counts = {
+    NEW:0,CONTACTED:0,CONFIRMED:0,ASSIGNED:0,
+    IN_PROGRESS:0,COMPLETED:0,CANCELLED:0
+  };
+
+  let completedCommissionTotal = 0;
+
+  rides.forEach(function(r){
+    if (Object.prototype.hasOwnProperty.call(counts,r.status)) counts[r.status]++;
+
+    if (r.status === 'COMPLETED') {
+      completedCommissionTotal += Number(r.mashwarakCommission || 0);
+    }
+  });
+
+  let driverCommissionOutstanding = 0;
+  Object.keys(commissionAccounts).forEach(function(driverId){
+    driverCommissionOutstanding += Number(
+      commissionAccounts[driverId].commissionOutstanding || 0
+    );
+  });
+
+  let driversUnderReview = 0;
+  let driversApproved = 0;
+
+  drivers.forEach(function(d){
+    if (d.adminStatus === 'UNDER_REVIEW') driversUnderReview++;
+    if (d.adminStatus === 'APPROVED') driversApproved++;
+  });
+
+  return {
+    ridesTotal:rides.length,
+    newRides:counts.NEW,
+    contactedRides:counts.CONTACTED,
+    confirmedRides:counts.CONFIRMED,
+    assignedRides:counts.ASSIGNED,
+    inProgressRides:counts.IN_PROGRESS,
+    completedRides:counts.COMPLETED,
+    cancelledRides:counts.CANCELLED,
+
+    driversTotal:drivers.length,
+    driversUnderReview:driversUnderReview,
+    driversApproved:driversApproved,
+
+    revenueToday:roundMoneyV28_(commissionCollectedToday),
+    commissionCollectedToday:roundMoneyV28_(commissionCollectedToday),
+    completedCommissionTotal:roundMoneyV28_(completedCommissionTotal),
+    driverCommissionOutstanding:roundMoneyV28_(driverCommissionOutstanding),
+
+    expensesToday:roundMoneyV28_(expensesToday),
+    driverPaidToday:roundMoneyV28_(legacyDriverPaidToday),
+    netCashToday:roundMoneyV28_(
+      commissionCollectedToday-expensesToday-legacyDriverPaidToday
+    ),
+
+    customerOutstanding:0
+  };
+}
+
+function getControlRides(token, filters) {
+  getControlUser_(token);
+  filters = filters || {};
+
+  let rows = getAdminRidesLegacyForV2_();
+  const status = clean_(filters.status).toUpperCase();
+  const q = normalizeSearchV2_(filters.q);
+
+  if (status && status !== 'ALL') {
+    rows = rows.filter(function(r){ return r.status === status; });
+  }
+
+  if (q) {
+    rows = rows.filter(function(r){
+      return normalizeSearchV2_([
+        r.rideId,r.customerName,r.mobile,r.from,r.to,
+        r.assignedDriverName,r.status
+      ].join(' ')).indexOf(q) !== -1;
+    });
+  }
+
+  return rows.map(function(r){
+    r.customerPaymentMode = 'DIRECT_TO_DRIVER';
+    r.customerPaid = 0;
+    r.customerBalance = 0;
+    r.driverPaid = 0;
+    r.driverBalance = 0;
+    r.captainNet = Number(r.driverCost || 0);
+    r.rideCommissionDue = r.status === 'COMPLETED'
+      ? Number(r.mashwarakCommission || 0)
+      : 0;
+    r.paymentStatus = 'DIRECT_TO_DRIVER';
+
+    return r;
+  });
+}
+
+function getControlDrivers(token, filters) {
+  getControlUser_(token);
+  filters = filters || {};
+
+  let rows = getAdminDriversLegacyForV2_();
+  const status = clean_(filters.status).toUpperCase();
+  const q = normalizeSearchV2_(filters.q);
+
+  if (status && status !== 'ALL') {
+    rows = rows.filter(function(r){ return r.adminStatus === status; });
+  }
+
+  if (q) {
+    rows = rows.filter(function(r){
+      return normalizeSearchV2_([
+        r.driverId,r.fullName,r.mobile,r.cityArea,
+        r.brandModel,r.brand,r.model,r.adminStatus
+      ].join(' ')).indexOf(q) !== -1;
+    });
+  }
+
+  const rides = getAdminRidesLegacyForV2_();
+  const tx = getTransactionsRawV2_();
+  const accounts = calculateAllDriverCommissionAccountsV51_(rides,tx);
+
+  const tripCounts = Object.create(null);
+  const completedCounts = Object.create(null);
+
+  rides.forEach(function(r){
+    if (!r.assignedDriverId) return;
+
+    tripCounts[r.assignedDriverId] =
+      (tripCounts[r.assignedDriverId] || 0) + 1;
+
+    if (r.status === 'COMPLETED') {
+      completedCounts[r.assignedDriverId] =
+        (completedCounts[r.assignedDriverId] || 0) + 1;
+    }
+  });
+
+  return rows.map(function(d){
+    const acc = accounts[d.driverId] || {
+      commissionDue:0,
+      commissionPaid:0,
+      commissionOutstanding:0
+    };
+
+    d.completedTrips = Number(completedCounts[d.driverId] || 0);
+    d.totalTrips = Number(tripCounts[d.driverId] || 0);
+    d.commissionDue = Number(acc.commissionDue || 0);
+    d.commissionPaid = Number(acc.commissionPaid || 0);
+    d.commissionOutstanding = Number(acc.commissionOutstanding || 0);
+    d.paidToDriver = 0;
+
+    return d;
+  });
+}
+
+
+function customerPhoneKeyV29_(value) {
+  let d = String(value || '').replace(/\D/g,'');
+
+  if (d.indexOf('0020') === 0) d = d.slice(4);
+  if (d.indexOf('20') === 0 && d.length === 12) d = d.slice(2);
+  if (d.indexOf('0') === 0 && d.length === 11) d = d.slice(1);
+
+  return d;
+}
+
+function customerDisplayPhoneV29_(value) {
+  const raw = String(value || '').trim();
+  const key = customerPhoneKeyV29_(raw);
+
+  if (/^1[0125]\d{8}$/.test(key)) {
+    return '0' + key;
+  }
+
+  return raw;
+}
+
+function ensureCustomerPhoneIntegrityV29_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('MASHWARAK_CUSTOMER_PHONE_V29_READY') === '1') return;
+
+  ensureControlV2Ready_();
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.CUSTOMERS);
+  if (!sh) return;
+
+  if (sh.getMaxRows() >= 2) {
+    sh.getRange(2,3,sh.getMaxRows()-1,1).setNumberFormat('@');
+  }
+
+  if (sh.getLastRow() >= 2) {
+    const vals = sh.getRange(2,3,sh.getLastRow()-1,1).getValues();
+    const fixed = vals.map(function(row){
+      return [customerDisplayPhoneV29_(row[0])];
+    });
+
+    sh.getRange(2,3,fixed.length,1).setNumberFormat('@').setValues(fixed);
+  }
+
+  props.setProperty('MASHWARAK_CUSTOMER_PHONE_V29_READY','1');
+}
+
+function enrichCustomersFromRidesV29_(customers, rides) {
+  const stats = Object.create(null);
+
+  (rides || []).forEach(function(r){
+    const key = customerPhoneKeyV29_(r.mobile);
+    if (!key) return;
+
+    if (!stats[key]) {
+      stats[key] = {
+        rideIds:Object.create(null),
+        total:0,
+        completed:0,
+        cancelled:0,
+        lastRideAt:'',
+        totalValue:0,
+        paid:0,
+        outstanding:0
+      };
+    }
+
+    const s = stats[key];
+    const rideId = String(r.rideId || '');
+
+    if (rideId && !s.rideIds[rideId]) {
+      s.rideIds[rideId] = true;
+      s.total++;
+
+      if (String(r.status || '').toUpperCase() === 'COMPLETED') s.completed++;
+      if (String(r.status || '').toUpperCase() === 'CANCELLED') s.cancelled++;
+    }
+
+    const createdAt = String(r.createdAt || '');
+    if (createdAt > s.lastRideAt) s.lastRideAt = createdAt;
+
+    const rideValue = Number(r.finalPrice || r.estimatedPrice || 0);
+    s.totalValue += rideValue;
+
+    if (String(r.status || '').toUpperCase() === 'COMPLETED') {
+      s.paid += rideValue;
+    }
+
+    s.outstanding += 0;
+  });
+
+  return (customers || []).map(function(c){
+    const key = customerPhoneKeyV29_(c.mobile);
+    const s = stats[key];
+
+    c.mobile = customerDisplayPhoneV29_(c.mobile);
+
+    if (s) {
+      c.totalRides = s.total;
+      c.completedRides = s.completed;
+      c.cancelledRides = s.cancelled;
+      c.lastRideAt = s.lastRideAt || c.lastRideAt;
+      c.totalValue = roundMoneyV28_(s.totalValue);
+      c.customerPaidTotal = roundMoneyV28_(s.paid);
+      c.customerOutstanding = roundMoneyV28_(s.outstanding);
+    } else {
+      c.totalValue = 0;
+      c.customerPaidTotal = 0;
+      c.customerOutstanding = 0;
+    }
+
+    return c;
+  });
+}
+
+function getControlCustomers(token, q) {
+  getControlUser_(token);
+  ensureControlV2Ready_();
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.CUSTOMERS);
+  const vals = sh.getDataRange().getValues();
+  const needle = normalizeSearchV2_(q);
+  const out = [];
+
+  for (let i=1;i<vals.length;i++) {
+    const r = vals[i];
+    if (!r[0]) continue;
+    const item = {
+      customerId:String(r[0]),
+      name:String(r[1] || ''),
+      mobile:customerDisplayPhoneV29_(r[2]),
+      createdAt:fmtDateTime_(r[3]),
+      lastRideAt:fmtDateTime_(r[4]),
+      totalRides:Number(r[5] || 0),
+      completedRides:Number(r[6] || 0),
+      cancelledRides:Number(r[7] || 0),
+      adminNotes:String(r[8] || ''),
+      active:r[9] === true || String(r[9]).toUpperCase()==='TRUE'
+    };
+    if (needle && normalizeSearchV2_(item.name+' '+item.mobile+' '+item.customerId).indexOf(needle)===-1) continue;
+    out.push(item);
+  }
+
+  out.sort(function(a,b){ return String(b.lastRideAt).localeCompare(String(a.lastRideAt)); });
+  return out;
+}
+
+function rebuildCustomersFromRides(token) {
+  const user = assertControlRole_(token,['OWNER','OPERATIONS']);
+  ensureControlV2Ready_();
+  ensureCustomerPhoneIntegrityV29_();
+
+  const rides = getAdminRidesLegacyForV2_();
+  const sh = getDb_().getSheetByName(APP.SHEETS.CUSTOMERS);
+  const vals = sh.getDataRange().getValues();
+
+  const aggregate = Object.create(null);
+
+  rides.forEach(function(r){
+    const key = customerPhoneKeyV29_(r.mobile);
+    if (!key) return;
+
+    if (!aggregate[key]) {
+      aggregate[key] = {
+        name:String(r.customerName || ''),
+        mobile:customerDisplayPhoneV29_(r.mobile),
+        total:0,
+        completed:0,
+        cancelled:0,
+        lastRideAt:String(r.createdAt || ''),
+        rideIds:Object.create(null)
+      };
+    }
+
+    const a = aggregate[key];
+    const rideId = String(r.rideId || '');
+
+    if (rideId && !a.rideIds[rideId]) {
+      a.rideIds[rideId] = true;
+      a.total++;
+
+      if (String(r.status || '').toUpperCase() === 'COMPLETED') a.completed++;
+      if (String(r.status || '').toUpperCase() === 'CANCELLED') a.cancelled++;
+    }
+
+    const createdAt = String(r.createdAt || '');
+    if (createdAt >= a.lastRideAt) {
+      a.lastRideAt = createdAt;
+      if (r.customerName) a.name = String(r.customerName);
+    }
+  });
+
+  const existingKeys = Object.create(null);
+
+  for (let i=1;i<vals.length;i++) {
+    if (!vals[i][0]) continue;
+
+    const row = i + 1;
+    const key = customerPhoneKeyV29_(vals[i][2]);
+    if (!key) continue;
+
+    existingKeys[key] = true;
+    const a = aggregate[key];
+
+    sh.getRange(row,3).setNumberFormat('@')
+      .setValue(customerDisplayPhoneV29_(vals[i][2]));
+
+    if (a) {
+      if (a.name) sh.getRange(row,2).setValue(a.name);
+      sh.getRange(row,5).setValue(a.lastRideAt || vals[i][4] || '');
+      sh.getRange(row,6).setValue(a.total);
+      sh.getRange(row,7).setValue(a.completed);
+      sh.getRange(row,8).setValue(a.cancelled);
+    } else {
+      sh.getRange(row,6).setValue(0);
+      sh.getRange(row,7).setValue(0);
+      sh.getRange(row,8).setValue(0);
+    }
+  }
+
+  Object.keys(aggregate).forEach(function(key){
+    if (existingKeys[key]) return;
+
+    const a = aggregate[key];
+    const id = nextSimpleIdV2_('C',sh);
+
+    sh.appendRow([
+      id,
+      a.name || '',
+      '',
+      new Date(),
+      a.lastRideAt || new Date(),
+      a.total,
+      a.completed,
+      a.cancelled,
+      '',
+      true
+    ]);
+
+    const row = sh.getLastRow();
+    sh.getRange(row,3).setNumberFormat('@').setValue(a.mobile);
+  });
+
+  logControlAction_(
+    user,
+    'REBUILD_CUSTOMERS',
+    'CUSTOMER',
+    '',
+    'Accurate rebuild from rides without increment duplication'
+  );
+
+  invalidateControlSnapshotV23_();
+
+  return {
+    success:true,
+    count:sh.getLastRow()-1
+  };
+}
+
+function upsertCustomerFromRide_(rideId, name, mobile, when) {
+  ensureControlV2Ready_();
+  ensureCustomerPhoneIntegrityV29_();
+
+  const displayMobile = customerDisplayPhoneV29_(mobile);
+  const phoneKey = customerPhoneKeyV29_(displayMobile);
+  if (!phoneKey) return;
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.CUSTOMERS);
+  const vals = sh.getDataRange().getValues();
+
+  for (let i=1;i<vals.length;i++) {
+    if (customerPhoneKeyV29_(vals[i][2]) !== phoneKey) continue;
+
+    const row = i+1;
+    const total = Number(vals[i][5] || 0) + 1;
+
+    sh.getRange(row,2).setValue(name || vals[i][1] || '');
+    sh.getRange(row,3).setNumberFormat('@').setValue(displayMobile);
+    sh.getRange(row,5).setValue(when instanceof Date ? when : new Date());
+    sh.getRange(row,6).setValue(total);
+    return;
+  }
+
+  const id = nextSimpleIdV2_('C',sh);
+
+  sh.appendRow([
+    id,
+    name || '',
+    displayMobile,
+    new Date(),
+    when instanceof Date ? when : new Date(),
+    1,
+    0,
+    0,
+    '',
+    true
+  ]);
+
+  const row = sh.getLastRow();
+  sh.getRange(row,3).setNumberFormat('@').setValue(displayMobile);
+}
+
+function updateControlCustomerNotes(token, customerId, notes) {
+  const user = assertControlRole_(token,['OWNER','OPERATIONS','ACCOUNTS']);
+  const sh = getDb_().getSheetByName(APP.SHEETS.CUSTOMERS);
+  const row = findRowById_(sh,customerId);
+  if (!row) throw new Error('العميل غير موجود.');
+  sh.getRange(row,9).setValue(clean_(notes));
+  logControlAction_(user,'UPDATE_CUSTOMER','CUSTOMER',customerId,'Notes');
+  invalidateControlSnapshotV23_();
+  return {success:true};
+}
+
+function setControlCustomerArchivedV29(token, customerId, archived) {
+  const user = assertControlRole_(token,['OWNER','OPERATIONS']);
+  const sh = getDb_().getSheetByName(APP.SHEETS.CUSTOMERS);
+  const row = findRowById_(sh,customerId);
+
+  if (!row) throw new Error('العميل غير موجود.');
+
+  const isArchived = archived === true || String(archived).toUpperCase() === 'TRUE';
+  sh.getRange(row,10).setValue(!isArchived);
+
+  logControlAction_(
+    user,
+    isArchived ? 'ARCHIVE_CUSTOMER' : 'RESTORE_CUSTOMER',
+    'CUSTOMER',
+    customerId,
+    isArchived ? 'Archived' : 'Restored'
+  );
+
+  invalidateControlSnapshotV23_();
+
+  return {
+    success:true,
+    customerId:String(customerId),
+    active:!isArchived
+  };
+}
+
+function getControlTransactions(token, filters) {
+  getControlUser_(token);
+  filters = filters || {};
+  let rows = getTransactionsRawV2_();
+  const q = normalizeSearchV2_(filters.q);
+  const type = clean_(filters.type).toUpperCase();
+
+  if (type && type !== 'ALL') rows = rows.filter(function(t){return t.type===type;});
+  if (q) rows = rows.filter(function(t){
+    return normalizeSearchV2_([
+      t.transactionId,t.rideId,t.customerMobile,t.driverId,t.type,
+      t.paymentMethod,t.reference,t.notes,t.createdByName
+    ].join(' ')).indexOf(q)!==-1;
+  });
+  return rows;
+}
+
+
+function getDriverCommissionAccountV51_(driverId) {
+  driverId = clean_(driverId);
+
+  if (!driverId) {
+    return {
+      driverId:'',
+      commissionDue:0,
+      commissionPaid:0,
+      commissionOutstanding:0
+    };
+  }
+
+  const rides = getAdminRidesLegacyForV2_();
+  const tx = getTransactionsRawV2_();
+
+  let commissionDue = 0;
+  let commissionPaid = 0;
+
+  rides.forEach(function(r){
+    if (
+      String(r.assignedDriverId || '') === String(driverId) &&
+      String(r.status || '').toUpperCase() === 'COMPLETED'
+    ) {
+      commissionDue += Number(r.mashwarakCommission || 0);
+    }
+  });
+
+  tx.forEach(function(t){
+    if (
+      t.status === 'CONFIRMED' &&
+      t.type === 'DRIVER_COMMISSION_PAYMENT' &&
+      t.direction === 'IN' &&
+      String(t.driverId || '') === String(driverId)
+    ) {
+      commissionPaid += Number(t.amount || 0);
+    }
+  });
+
+  commissionDue = roundMoneyV28_(commissionDue);
+  commissionPaid = roundMoneyV28_(commissionPaid);
+
+  return {
+    driverId:String(driverId),
+    commissionDue:commissionDue,
+    commissionPaid:commissionPaid,
+    commissionOutstanding:roundMoneyV28_(
+      Math.max(0,commissionDue-commissionPaid)
+    )
+  };
+}
+
+function calculateAllDriverCommissionAccountsV51_(rides, tx) {
+  const map = Object.create(null);
+
+  (rides || []).forEach(function(r){
+    const driverId = String(r.assignedDriverId || '');
+    if (!driverId) return;
+
+    if (!map[driverId]) {
+      map[driverId] = {
+        commissionDue:0,
+        commissionPaid:0,
+        commissionOutstanding:0
+      };
+    }
+
+    if (String(r.status || '').toUpperCase() === 'COMPLETED') {
+      map[driverId].commissionDue += Number(r.mashwarakCommission || 0);
+    }
+  });
+
+  (tx || []).forEach(function(t){
+    if (
+      t.status !== 'CONFIRMED' ||
+      t.type !== 'DRIVER_COMMISSION_PAYMENT' ||
+      t.direction !== 'IN' ||
+      !t.driverId
+    ) return;
+
+    const driverId = String(t.driverId);
+
+    if (!map[driverId]) {
+      map[driverId] = {
+        commissionDue:0,
+        commissionPaid:0,
+        commissionOutstanding:0
+      };
+    }
+
+    map[driverId].commissionPaid += Number(t.amount || 0);
+  });
+
+  Object.keys(map).forEach(function(driverId){
+    const x = map[driverId];
+
+    x.commissionDue = roundMoneyV28_(x.commissionDue);
+    x.commissionPaid = roundMoneyV28_(x.commissionPaid);
+    x.commissionOutstanding = roundMoneyV28_(
+      Math.max(0,x.commissionDue-x.commissionPaid)
+    );
+  });
+
+  return map;
+}
+
+function addControlTransaction(token, payload) {
+  const user = assertControlRole_(token,['OWNER','ACCOUNTS']);
+  ensureControlV2Ready_();
+  payload = payload || {};
+
+  const type = String(payload.type || '').toUpperCase();
+  const allowedTypes = ['CUSTOMER_PAYMENT','DRIVER_PAYMENT','DRIVER_COMMISSION_PAYMENT','EXPENSE','REFUND'];
+  if (allowedTypes.indexOf(type)===-1) throw new Error('نوع الحركة غير صحيح.');
+
+  const amount = Number(payload.amount || 0);
+  if (!(amount > 0)) throw new Error('أدخل مبلغ صحيح.');
+
+  let direction = String(payload.direction || '').toUpperCase();
+  if (!direction) {
+    direction = (
+      type === 'CUSTOMER_PAYMENT' ||
+      type === 'DRIVER_COMMISSION_PAYMENT'
+    ) ? 'IN' : 'OUT';
+  }
+  if (['IN','OUT'].indexOf(direction)===-1) throw new Error('اتجاه الحركة غير صحيح.');
+
+  if (type === 'DRIVER_COMMISSION_PAYMENT') {
+    const driverId = clean_(payload.driverId);
+    if (!driverId) throw new Error('اختر الكابتن الذي سدد العمولة.');
+
+    direction = 'IN';
+
+    const account = getDriverCommissionAccountV51_(driverId);
+
+    if (!(account.commissionOutstanding > 0)) {
+      throw new Error('لا توجد عمولة مستحقة على هذا الكابتن.');
+    }
+
+    if (amount > account.commissionOutstanding + 0.009) {
+      throw new Error(
+        'المبلغ أكبر من العمولة المتبقية على الكابتن وهي '
+        + account.commissionOutstanding
+        + ' ج.م'
+      );
+    }
+  }
+
+  const method = String(payload.paymentMethod || 'CASH').toUpperCase();
+  const status = String(payload.status || 'CONFIRMED').toUpperCase();
+  if (['CONFIRMED','PENDING','CANCELLED'].indexOf(status)===-1) throw new Error('حالة الحركة غير صحيحة.');
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.TRANSACTIONS);
+  const id = nextSimpleIdV2_('T',sh);
+  const createdAt = new Date();
+  const rideId = clean_(payload.rideId);
+  const customerMobile = normalizePhone_(payload.customerMobile);
+  const driverId = clean_(payload.driverId);
+  const reference = clean_(payload.reference);
+  const notes = clean_(payload.notes);
+
+  sh.appendRow([
+    id,createdAt,rideId,customerMobile,
+    driverId,type,direction,amount,method,status,
+    reference,notes,user.userId,user.name
+  ]);
+
+  logControlAction_(user,'CREATE_TRANSACTION','TRANSACTION',id,JSON.stringify({
+    type:type,amount:amount,rideId:rideId
+  }));
+
+  invalidateControlSnapshotV23_();
+
+  return {
+    success:true,
+    transactionId:id,
+    transaction:{
+      transactionId:id,
+      createdAt:fmtDateTime_(createdAt),
+      createdDate:Utilities.formatDate(createdAt,APP.TZ,'yyyy-MM-dd'),
+      rideId:rideId,
+      customerMobile:customerMobile,
+      driverId:driverId,
+      type:type,
+      direction:direction,
+      amount:amount,
+      paymentMethod:method,
+      status:status,
+      reference:reference,
+      notes:notes,
+      createdByUserId:user.userId,
+      createdByName:user.name
+    }
+  };
+}
+
+function getControlUsers(token) {
+  assertControlRole_(token,['OWNER']);
+  ensureControlV2Ready_();
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.ADMIN_USERS);
+  const vals = sh.getDataRange().getValues();
+  const out=[];
+
+  for (let i=1;i<vals.length;i++) {
+    const r=vals[i];
+    if (!r[0]) continue;
+    out.push({
+      userId:String(r[0]),
+      name:String(r[1] || ''),
+      username:String(r[2] || ''),
+      role:String(r[4] || 'VIEWER'),
+      active:r[5]===true || String(r[5]).toUpperCase()==='TRUE',
+      createdAt:fmtDateTime_(r[6]),
+      lastLogin:fmtDateTime_(r[7]),
+      phone:String(r[8] || ''),
+      notes:String(r[9] || '')
+    });
+  }
+  return out;
+}
+
+function saveControlUser(token, payload) {
+  const actor = assertControlRole_(token,['OWNER']);
+  ensureControlV2Ready_();
+  payload = payload || {};
+
+  const name = clean_(payload.name);
+  const username = clean_(payload.username).toLowerCase();
+  const role = String(payload.role || 'VIEWER').toUpperCase();
+  const active = payload.active !== false && String(payload.active).toUpperCase() !== 'FALSE';
+  const password = String(payload.password || '');
+  const allowedRoles = ['OWNER','OPERATIONS','ACCOUNTS','REVIEWER','VIEWER'];
+
+  if (!name) throw new Error('اكتب اسم المستخدم.');
+  if (!/^[a-zA-Z0-9._-]{3,30}$/.test(username)) throw new Error('اسم الدخول غير صحيح.');
+  if (allowedRoles.indexOf(role)===-1) throw new Error('الصلاحية غير صحيحة.');
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.ADMIN_USERS);
+  const vals = sh.getDataRange().getValues();
+  let row=0;
+
+  for (let i=1;i<vals.length;i++) {
+    if (String(vals[i][0])===String(payload.userId || '')) row=i+1;
+    if (!row && String(vals[i][2] || '').toLowerCase()===username && String(vals[i][0])!==String(payload.userId || '')) {
+      throw new Error('اسم الدخول مستخدم بالفعل.');
+    }
+  }
+
+  if (row) {
+    sh.getRange(row,2).setValue(name);
+    sh.getRange(row,3).setValue(username);
+    if (password) {
+      if (password.length<6) throw new Error('كلمة المرور يجب ألا تقل عن 6 أحرف.');
+      sh.getRange(row,4).setValue(hash_(password));
+    }
+    sh.getRange(row,5).setValue(role);
+    sh.getRange(row,6).setValue(active);
+    sh.getRange(row,9).setValue(clean_(payload.phone));
+    sh.getRange(row,10).setValue(clean_(payload.notes));
+    logControlAction_(actor,'UPDATE_USER','USER',String(payload.userId),username);
+    return {success:true,userId:String(payload.userId),updated:true};
+  }
+
+  if (password.length<6) throw new Error('كلمة المرور يجب ألا تقل عن 6 أحرف.');
+  const id=nextSimpleIdV2_('U',sh);
+  sh.appendRow([
+    id,name,username,hash_(password),role,active,new Date(),'',
+    clean_(payload.phone),clean_(payload.notes)
+  ]);
+  logControlAction_(actor,'CREATE_USER','USER',id,username);
+  invalidateControlSnapshotV23_();
+  return {success:true,userId:id,created:true};
+}
+
+
+function saveControlRideOpsV25(token, payload) {
+  const user = assertControlRole_(token,['OWNER','OPERATIONS']);
+  ensureRideOpsV25_();
+
+  payload = payload || {};
+
+  const rideId = clean_(payload.rideId);
+  if (!rideId) throw new Error('رقم المشوار غير موجود.');
+
+  const allowedStatuses = [
+    'NEW','CONTACTED','CONFIRMED','ASSIGNED',
+    'IN_PROGRESS','COMPLETED','CANCELLED'
+  ];
+
+  const status = String(payload.status || 'NEW').toUpperCase();
+  if (allowedStatuses.indexOf(status) === -1) {
+    throw new Error('حالة المشوار غير صحيحة.');
+  }
+
+  const finalPriceText = String(
+    payload.finalPrice === null || payload.finalPrice === undefined
+      ? ''
+      : payload.finalPrice
+  ).trim();
+
+  const finalPrice = finalPriceText === '' ? 0 : Number(finalPriceText);
+
+  if (!isFinite(finalPrice) || finalPrice < 0) {
+    throw new Error('السعر يجب ألا يكون أقل من صفر.');
+  }
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.RIDES);
+  const row = findRowById_(sh,rideId);
+  if (!row) throw new Error('المشوار غير موجود.');
+
+  const map = rideHeaderMapV25_(sh);
+  const estimatedCol = map['estimated price'];
+  const estimatedPrice = estimatedCol
+    ? Number(sh.getRange(row,estimatedCol).getValue() || 0)
+    : 0;
+
+  // Manual final price wins. If it is still blank, the application's
+  // stored estimated price is the source amount.
+  const effectivePrice = finalPrice > 0 ? finalPrice : estimatedPrice;
+  const finance = calculateRideFinanceV28_(effectivePrice);
+
+  let driverId = clean_(payload.assignedDriverId);
+  let driverName = '';
+
+  if (driverId) {
+    const drivers = getAdminDriversLegacyForV2_();
+    const driver = drivers.find(function(d){
+      return String(d.driverId) === String(driverId);
+    });
+
+    if (!driver) throw new Error('الكابتن المحدد غير موجود.');
+    if (driver.adminStatus !== 'APPROVED') {
+      throw new Error('لا يمكن تعيين كابتن غير معتمد.');
+    }
+
+    driverName = driver.fullName;
+  }
+
+  rideSetV25_(sh,row,map,'Final Price',finalPrice > 0 ? finalPrice : '');
+  rideSetV25_(sh,row,map,'Driver Cost',finance.price > 0 ? finance.driverDue : '');
+  rideSetV25_(sh,row,map,'Mashwarak Commission',finance.price > 0 ? finance.commission : '');
+  rideSetV25_(sh,row,map,'Commission Rate',finance.commissionRate);
+  rideSetV25_(sh,row,map,'Assigned Driver ID',driverId);
+  rideSetV25_(sh,row,map,'Assigned Driver Name',driverName);
+  rideSetV25_(sh,row,map,'Status',status);
+  rideSetV25_(sh,row,map,'Admin Notes',clean_(payload.adminNotes));
+  rideSetV25_(sh,row,map,'Updated At',new Date());
+
+  logControlAction_(
+    user,
+    'UPDATE_RIDE_OPS',
+    'RIDE',
+    rideId,
+    JSON.stringify({
+      status:status,
+      driverId:driverId,
+      finalPrice:finalPrice,
+      effectivePrice:finance.price,
+      commissionRate:finance.commissionRate,
+      mashwarakCommission:finance.commission,
+      driverCost:finance.driverDue
+    })
+  );
+
+  invalidateControlSnapshotV23_();
+
+  return {
+    success:true,
+    rideId:rideId,
+    status:status,
+    assignedDriverId:driverId,
+    assignedDriverName:driverName,
+    effectivePrice:finance.price,
+    commissionRate:finance.commissionRate,
+    mashwarakCommission:finance.commission,
+    driverCost:finance.driverDue
+  };
+}
+
+function updateControlRide(token, payload) {
+  const user = assertControlRole_(token,['OWNER','OPERATIONS']);
+  payload = payload || {};
+
+  const legacyToken = createCompatAdminTokenV2_(user);
+  const result = updateRide(legacyToken,payload);
+  logControlAction_(user,'UPDATE_RIDE','RIDE',clean_(payload.rideId),JSON.stringify(payload));
+  invalidateControlSnapshotV23_();
+  return result;
+}
+
+function updateControlDriver(token, driverId, status, adminNotes) {
+  const user = assertControlRole_(token,['OWNER','OPERATIONS','REVIEWER']);
+  const legacyToken = createCompatAdminTokenV2_(user);
+  const result = updateDriverAdminStatus(legacyToken,driverId,status,adminNotes);
+  logControlAction_(user,'UPDATE_DRIVER','DRIVER',clean_(driverId),String(status));
+  invalidateControlSnapshotV23_();
+  return result;
+}
+
+function getControlActivity(token, limit) {
+  getControlUser_(token);
+  limit = Math.max(20,Math.min(500,Number(limit || 100)));
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.LOGS);
+  const vals = sh.getDataRange().getValues();
+  const out=[];
+
+  for (let i=vals.length-1;i>=1 && out.length<limit;i--) {
+    const r=vals[i];
+    if (!r[0]) continue;
+    out.push({
+      timestamp:fmtDateTime_(r[0]),
+      action:String(r[1] || ''),
+      entityType:String(r[2] || ''),
+      entityId:String(r[3] || ''),
+      details:String(r[4] || '')
+    });
+  }
+  return out;
+}
+
+function getTransactionsRawV2_() {
+  ensureControlV2Ready_();
+  const sh = getDb_().getSheetByName(APP.SHEETS.TRANSACTIONS);
+  const vals = sh.getDataRange().getValues();
+  const out=[];
+
+  for (let i=1;i<vals.length;i++) {
+    const r=vals[i];
+    if (!r[0]) continue;
+    out.push({
+      transactionId:String(r[0]),
+      createdAt:fmtDateTime_(r[1]),
+      createdDate:r[1] instanceof Date ? Utilities.formatDate(r[1],APP.TZ,'yyyy-MM-dd') : '',
+      rideId:String(r[2] || ''),
+      customerMobile:String(r[3] || ''),
+      driverId:String(r[4] || ''),
+      type:String(r[5] || '').toUpperCase(),
+      direction:String(r[6] || '').toUpperCase(),
+      amount:Number(r[7] || 0),
+      paymentMethod:String(r[8] || ''),
+      status:String(r[9] || '').toUpperCase(),
+      reference:String(r[10] || ''),
+      notes:String(r[11] || ''),
+      createdByUserId:String(r[12] || ''),
+      createdByName:String(r[13] || '')
+    });
+  }
+  out.sort(function(a,b){return String(b.createdAt).localeCompare(String(a.createdAt));});
+  return out;
+}
+
+function ensureRideOpsV25_() {
+  const props = PropertiesService.getScriptProperties();
+
+  if (props.getProperty('MASHWARAK_RIDE_OPS_V25_READY') !== '1') {
+    const sh = getDb_().getSheetByName(APP.SHEETS.RIDES);
+    ensureNamedHeaders_(sh, ['Driver Cost']);
+    props.setProperty('MASHWARAK_RIDE_OPS_V25_READY','1');
+  }
+
+  ensureRideCommissionV28_();
+  ensureRideWorkflowV50_();
+}
+
+function ensureRideCommissionV28_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('MASHWARAK_COMMISSION_V28_READY') === '1') return;
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.RIDES);
+  ensureNamedHeaders_(sh, [
+    'Driver Cost','Mashwarak Commission','Commission Rate'
+  ]);
+
+  if (sh.getLastRow() >= 2) {
+    const map = rideHeaderMapV25_(sh);
+    const values = sh.getDataRange().getValues();
+
+    const estimatedIndex = Number(map['estimated price'] || 0) - 1;
+    const finalIndex = Number(map['final price'] || 0) - 1;
+    const driverCol = map['driver cost'];
+    const commissionCol = map['mashwarak commission'];
+    const rateCol = map['commission rate'];
+
+    const driverValues = [];
+    const commissionValues = [];
+    const rateValues = [];
+
+    for (let i=1;i<values.length;i++) {
+      const r = values[i];
+
+      const estimatedPrice = estimatedIndex >= 0
+        ? Number(r[estimatedIndex] || 0)
+        : 0;
+
+      const finalPrice = finalIndex >= 0
+        ? Number(r[finalIndex] || 0)
+        : 0;
+
+      const effectivePrice = finalPrice > 0 ? finalPrice : estimatedPrice;
+      const finance = calculateRideFinanceV28_(effectivePrice);
+
+      driverValues.push([finance.price > 0 ? finance.driverDue : '']);
+      commissionValues.push([finance.price > 0 ? finance.commission : '']);
+      rateValues.push([finance.commissionRate]);
+    }
+
+    if (driverValues.length) {
+      sh.getRange(2,driverCol,driverValues.length,1).setValues(driverValues);
+      sh.getRange(2,commissionCol,commissionValues.length,1).setValues(commissionValues);
+      sh.getRange(2,rateCol,rateValues.length,1).setValues(rateValues);
+    }
+  }
+
+  props.setProperty('MASHWARAK_COMMISSION_V28_READY','1');
+}
+
+
+function ensureRideWorkflowV50_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('MASHWARAK_RIDE_WORKFLOW_V50_READY') === '1') return;
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.RIDES);
+
+  ensureNamedHeaders_(sh, [
+    'Workflow Stage','Contacted At','Confirmed At','Assigned At',
+    'Started At','Arrived At','Completed At','Cancelled At','Cancel Reason'
+  ]);
+
+  if (sh.getLastRow() >= 2) {
+    const map = rideHeaderMapV25_(sh);
+    const stageCol = map['workflow stage'];
+    const statusCol = map['status'];
+    const arrivedCol = map['arrived at'];
+    const rows = sh.getRange(2,1,sh.getLastRow()-1,sh.getLastColumn()).getValues();
+    const stageValues = [];
+
+    rows.forEach(function(r){
+      const existing = stageCol ? String(r[stageCol-1] || '').toUpperCase() : '';
+      if (existing) {
+        stageValues.push([existing]);
+        return;
+      }
+
+      const status = statusCol ? String(r[statusCol-1] || 'NEW').toUpperCase() : 'NEW';
+      const arrived = arrivedCol ? r[arrivedCol-1] : '';
+
+      let stage = status;
+      if (status === 'IN_PROGRESS' && arrived) stage = 'SETTLEMENT';
+      if (['NEW','CONTACTED','CONFIRMED','ASSIGNED','IN_PROGRESS','COMPLETED','CANCELLED'].indexOf(stage) === -1) {
+        stage = 'NEW';
+      }
+
+      stageValues.push([stage]);
+    });
+
+    if (stageValues.length) {
+      sh.getRange(2,stageCol,stageValues.length,1).setValues(stageValues);
+    }
+  }
+
+  props.setProperty('MASHWARAK_RIDE_WORKFLOW_V50_READY','1');
+}
+
+function rideGetV50_(sh,row,map,header,fallback) {
+  const col = map[String(header).toLowerCase()];
+  if (!col) return fallback;
+  const value = sh.getRange(row,col).getValue();
+  return (value === null || typeof value === 'undefined' || value === '') ? fallback : value;
+}
+
+function deriveRideWorkflowStageV50_(status, storedStage, arrivedAt) {
+  const stage = String(storedStage || '').toUpperCase();
+  const valid = [
+    'NEW','CONTACTED','CONFIRMED','ASSIGNED',
+    'IN_PROGRESS','SETTLEMENT','COMPLETED','CANCELLED'
+  ];
+
+  if (valid.indexOf(stage) !== -1) return stage;
+
+  const s = String(status || 'NEW').toUpperCase();
+  if (s === 'IN_PROGRESS' && arrivedAt) return 'SETTLEMENT';
+  if (valid.indexOf(s) !== -1) return s;
+  return 'NEW';
+}
+
+function rideWorkflowStatusForStageV50_(stage) {
+  stage = String(stage || '').toUpperCase();
+
+  if (stage === 'SETTLEMENT') return 'IN_PROGRESS';
+
+  if ([
+    'NEW','CONTACTED','CONFIRMED','ASSIGNED',
+    'IN_PROGRESS','COMPLETED','CANCELLED'
+  ].indexOf(stage) !== -1) {
+    return stage;
+  }
+
+  throw new Error('مرحلة التشغيل غير صحيحة.');
+}
+
+function getRideFinancialStateV50_(rideId, sh, row, map) {
+  const estimatedPrice = Number(rideGetV50_(sh,row,map,'Estimated Price',0) || 0);
+  const finalPrice = Number(rideGetV50_(sh,row,map,'Final Price',0) || 0);
+  const price = finalPrice > 0 ? finalPrice : estimatedPrice;
+  const finance = calculateRideFinanceV28_(price);
+
+  let customerPaid = 0;
+  let driverPaid = 0;
+  let expenses = 0;
+
+  const tx = getTransactionsRawV2_();
+
+  tx.forEach(function(t){
+    if (String(t.rideId || '') !== String(rideId)) return;
+    if (String(t.status || '').toUpperCase() !== 'CONFIRMED') return;
+
+    if (t.type === 'CUSTOMER_PAYMENT' && t.direction === 'IN') {
+      customerPaid += Number(t.amount || 0);
+    } else if (t.type === 'DRIVER_PAYMENT' && t.direction === 'OUT') {
+      driverPaid += Number(t.amount || 0);
+    } else if (t.type === 'EXPENSE' && t.direction === 'OUT') {
+      expenses += Number(t.amount || 0);
+    }
+  });
+
+  return {
+    price:roundMoneyV28_(price),
+    commission:finance.commission,
+    driverDue:finance.driverDue,
+    customerPaid:roundMoneyV28_(customerPaid),
+    customerBalance:roundMoneyV28_(Math.max(0,price-customerPaid)),
+    driverPaid:roundMoneyV28_(driverPaid),
+    driverBalance:roundMoneyV28_(Math.max(0,finance.driverDue-driverPaid)),
+    expenses:roundMoneyV28_(expenses)
+  };
+}
+
+
+function rideRowValueV52_(rowValues,map,header,fallback) {
+  const col = map[String(header).toLowerCase()];
+  if (!col) return fallback;
+
+  const value = rowValues[col-1];
+  return (
+    value === null ||
+    typeof value === 'undefined' ||
+    value === ''
+  ) ? fallback : value;
+}
+
+function rideApplyPatchV52_(sh,row,map,rowValues,patch) {
+  Object.keys(patch || {}).forEach(function(header){
+    const col = map[String(header).toLowerCase()];
+    if (!col) throw new Error('عمود غير موجود: ' + header);
+    rowValues[col-1] = patch[header];
+  });
+
+  sh.getRange(row,1,1,rowValues.length).setValues([rowValues]);
+}
+
+function validateApprovedDriverV52_(driverId) {
+  driverId = clean_(driverId);
+  if (!driverId) throw new Error('اختر كابتن معتمد أولًا.');
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.DRIVERS);
+  const row = findRowById_(sh,driverId);
+  if (!row) throw new Error('الكابتن المحدد غير موجود.');
+
+  const values = sh.getRange(row,1,1,sh.getLastColumn()).getValues()[0];
+  const status = String(values[14] || 'UNDER_REVIEW').toUpperCase();
+
+  if (status !== 'APPROVED') {
+    throw new Error('لا يمكن إسناد المشوار لكابتن غير معتمد.');
+  }
+
+  return {
+    driverId:String(values[0] || driverId),
+    fullName:String(values[2] || '')
+  };
+}
+
+function dataEpochV53_() {
+  const props = PropertiesService.getScriptProperties();
+  let epoch = props.getProperty('MASHWARAK_DATA_EPOCH_V53');
+
+  if (!epoch) {
+    epoch = 'EPOCH-' + new Date().getTime();
+    props.setProperty('MASHWARAK_DATA_EPOCH_V53',epoch);
+  }
+
+  return epoch;
+}
+
+function saveRideWorkflowDetailsV50(token, payload) {
+  const user = assertControlRole_(token,['OWNER','OPERATIONS']);
+  ensureRideOpsV25_();
+  payload = payload || {};
+
+  const rideId = clean_(payload.rideId);
+  if (!rideId) throw new Error('رقم المشوار غير موجود.');
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.RIDES);
+  const row = findRowById_(sh,rideId);
+  if (!row) throw new Error('المشوار غير موجود.');
+
+  const map = rideHeaderMapV25_(sh);
+  const rowValues = sh.getRange(row,1,1,sh.getLastColumn()).getValues()[0];
+
+  const status = String(
+    rideRowValueV52_(rowValues,map,'Status','NEW')
+  ).toUpperCase();
+
+  const stage = deriveRideWorkflowStageV50_(
+    status,
+    rideRowValueV52_(rowValues,map,'Workflow Stage',''),
+    rideRowValueV52_(rowValues,map,'Arrived At','')
+  );
+
+  if (stage === 'COMPLETED' || stage === 'CANCELLED') {
+    throw new Error('لا يمكن تعديل مشوار مغلق أو ملغي.');
+  }
+
+  const priceText = String(
+    payload.finalPrice === null || payload.finalPrice === undefined
+      ? ''
+      : payload.finalPrice
+  ).trim();
+
+  let price = Number(
+    rideRowValueV52_(rowValues,map,'Final Price',0) ||
+    rideRowValueV52_(rowValues,map,'Estimated Price',0) ||
+    0
+  );
+
+  if (priceText !== '') {
+    price = Number(priceText);
+    if (!isFinite(price) || price < 0) throw new Error('السعر غير صحيح.');
+  }
+
+  const finance = calculateRideFinanceV28_(price);
+  const now = new Date();
+  const notes = clean_(payload.adminNotes);
+
+  rideApplyPatchV52_(sh,row,map,rowValues,{
+    'Final Price':price > 0 ? price : '',
+    'Driver Cost':finance.price > 0 ? finance.driverDue : '',
+    'Mashwarak Commission':finance.price > 0 ? finance.commission : '',
+    'Commission Rate':finance.commissionRate,
+    'Admin Notes':notes,
+    'Updated At':now
+  });
+
+  logControlAction_(
+    user,
+    'RIDE_DETAILS_SAVED',
+    'RIDE',
+    rideId,
+    'حفظ السعر والملاحظات التشغيلية | السعر ' + finance.price
+  );
+
+  invalidateControlSnapshotV23_();
+
+  return {
+    success:true,
+    rideId:rideId,
+    ridePatch:{
+      finalPrice:finance.price,
+      driverCost:finance.driverDue,
+      captainNet:finance.driverDue,
+      mashwarakCommission:finance.commission,
+      commissionRate:finance.commissionRate,
+      adminNotes:notes,
+      updatedAt:fmtDateTime_(now),
+      netProfit:finance.commission
+    },
+    serverMs:0
+  };
+}
+
+function validateApprovedDriverV50_(driverId) {
+  driverId = clean_(driverId);
+  if (!driverId) throw new Error('اختر كابتن معتمد أولًا.');
+
+  const drivers = getAdminDriversLegacyForV2_();
+  const driver = drivers.find(function(d){
+    return String(d.driverId) === String(driverId);
+  });
+
+  if (!driver) throw new Error('الكابتن المحدد غير موجود.');
+  if (driver.adminStatus !== 'APPROVED') {
+    throw new Error('لا يمكن إسناد المشوار لكابتن غير معتمد.');
+  }
+
+  return driver;
+}
+
+function advanceRideWorkflowV50(token, payload) {
+  const started = new Date().getTime();
+  payload = payload || {};
+
+  const rideId = clean_(payload.rideId);
+  const action = String(payload.action || '').toUpperCase();
+
+  const allowedRoles = action === 'CLOSE'
+    ? ['OWNER','OPERATIONS','ACCOUNTS']
+    : ['OWNER','OPERATIONS'];
+
+  const user = assertControlRole_(token,allowedRoles);
+
+  ensureRideOpsV25_();
+
+  if (!rideId) throw new Error('رقم المشوار غير موجود.');
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.RIDES);
+  const row = findRowById_(sh,rideId);
+  if (!row) throw new Error('المشوار غير موجود.');
+
+  const map = rideHeaderMapV25_(sh);
+  const rowValues = sh.getRange(row,1,1,sh.getLastColumn()).getValues()[0];
+
+  const value = function(header,fallback){
+    return rideRowValueV52_(rowValues,map,header,fallback);
+  };
+
+  const status = String(value('Status','NEW')).toUpperCase();
+  const currentStage = deriveRideWorkflowStageV50_(
+    status,
+    value('Workflow Stage',''),
+    value('Arrived At','')
+  );
+
+  if (currentStage === 'COMPLETED') {
+    throw new Error('المشوار مغلق بالفعل.');
+  }
+  if (currentStage === 'CANCELLED') {
+    throw new Error('المشوار ملغي.');
+  }
+
+  const now = new Date();
+  let nextStage = currentStage;
+  let actionName = '';
+  let detail = '';
+  let driverCommissionEarned = 0;
+
+  const sheetPatch = {'Updated At':now};
+  const ridePatch = {updatedAt:fmtDateTime_(now)};
+
+  if (action === 'CONTACT') {
+    if (currentStage !== 'NEW') throw new Error('هذه الخطوة تمت بالفعل.');
+
+    nextStage = 'CONTACTED';
+
+    sheetPatch['Status'] = 'CONTACTED';
+    sheetPatch['Workflow Stage'] = nextStage;
+    sheetPatch['Contacted At'] = now;
+
+    ridePatch.status = 'CONTACTED';
+    ridePatch.workflowStage = nextStage;
+    ridePatch.contactedAt = fmtDateTime_(now);
+
+    actionName = 'RIDE_CONTACT_STARTED';
+    detail = 'بدأ التواصل مع العميل';
+  }
+
+  else if (action === 'CONFIRM') {
+    if (currentStage !== 'CONTACTED') {
+      throw new Error('يجب بدء التواصل مع العميل أولًا.');
+    }
+
+    const priceInput = Number(payload.finalPrice || 0);
+    const estimated = Number(value('Estimated Price',0) || 0);
+    const existingFinal = Number(value('Final Price',0) || 0);
+    const price = priceInput > 0
+      ? priceInput
+      : (existingFinal > 0 ? existingFinal : estimated);
+
+    if (!(price > 0)) throw new Error('حدد سعر المشوار قبل التأكيد.');
+
+    const finance = calculateRideFinanceV28_(price);
+    const notes = clean_(payload.adminNotes);
+
+    Object.assign(sheetPatch,{
+      'Final Price':finance.price,
+      'Driver Cost':finance.driverDue,
+      'Mashwarak Commission':finance.commission,
+      'Commission Rate':finance.commissionRate,
+      'Admin Notes':notes,
+      'Status':'CONFIRMED',
+      'Workflow Stage':'CONFIRMED',
+      'Confirmed At':now
+    });
+
+    Object.assign(ridePatch,{
+      finalPrice:finance.price,
+      driverCost:finance.driverDue,
+      captainNet:finance.driverDue,
+      mashwarakCommission:finance.commission,
+      commissionRate:finance.commissionRate,
+      adminNotes:notes,
+      status:'CONFIRMED',
+      workflowStage:'CONFIRMED',
+      confirmedAt:fmtDateTime_(now),
+      netProfit:roundMoneyV28_(
+        finance.commission - Number(value('Ride Expenses',0) || 0)
+      )
+    });
+
+    nextStage = 'CONFIRMED';
+    actionName = 'RIDE_CONFIRMED';
+    detail = 'العميل أكد المشوار | السعر ' + finance.price + ' ج.م';
+  }
+
+  else if (action === 'ASSIGN') {
+    if (currentStage !== 'CONFIRMED' && currentStage !== 'ASSIGNED') {
+      throw new Error('المشوار غير جاهز للإسناد.');
+    }
+
+    const driver = validateApprovedDriverV52_(payload.driverId);
+    const previousDriver = String(value('Assigned Driver ID','') || '');
+
+    Object.assign(sheetPatch,{
+      'Assigned Driver ID':driver.driverId,
+      'Assigned Driver Name':driver.fullName,
+      'Status':'ASSIGNED',
+      'Workflow Stage':'ASSIGNED',
+      'Assigned At':now
+    });
+
+    Object.assign(ridePatch,{
+      assignedDriverId:driver.driverId,
+      assignedDriverName:driver.fullName,
+      status:'ASSIGNED',
+      workflowStage:'ASSIGNED',
+      assignedAt:fmtDateTime_(now)
+    });
+
+    nextStage = 'ASSIGNED';
+    actionName = previousDriver && previousDriver !== String(driver.driverId)
+      ? 'RIDE_REASSIGNED'
+      : 'RIDE_ASSIGNED';
+
+    detail = (
+      actionName === 'RIDE_REASSIGNED'
+        ? 'تم تغيير الكابتن إلى '
+        : 'تم إسناد المشوار إلى '
+    ) + driver.fullName + ' [' + driver.driverId + ']';
+  }
+
+  else if (action === 'START') {
+    if (currentStage !== 'ASSIGNED') {
+      throw new Error('يجب إسناد المشوار لكابتن أولًا.');
+    }
+
+    const driverId = String(value('Assigned Driver ID','') || '');
+    if (!driverId) throw new Error('لا يوجد كابتن معيّن.');
+
+    Object.assign(sheetPatch,{
+      'Status':'IN_PROGRESS',
+      'Workflow Stage':'IN_PROGRESS',
+      'Started At':now
+    });
+
+    Object.assign(ridePatch,{
+      status:'IN_PROGRESS',
+      workflowStage:'IN_PROGRESS',
+      startedAt:fmtDateTime_(now)
+    });
+
+    nextStage = 'IN_PROGRESS';
+    actionName = 'RIDE_STARTED';
+    detail = 'بدأت الرحلة فعليًا';
+  }
+
+  else if (action === 'ARRIVE') {
+    if (currentStage !== 'IN_PROGRESS') {
+      throw new Error('الرحلة ليست في مرحلة التنفيذ.');
+    }
+
+    Object.assign(sheetPatch,{
+      'Status':'IN_PROGRESS',
+      'Workflow Stage':'SETTLEMENT',
+      'Arrived At':now
+    });
+
+    Object.assign(ridePatch,{
+      status:'IN_PROGRESS',
+      workflowStage:'SETTLEMENT',
+      arrivedAt:fmtDateTime_(now)
+    });
+
+    nextStage = 'SETTLEMENT';
+    actionName = 'RIDE_ARRIVED';
+    detail = 'تم تأكيد وصول العميل تليفونيًا | العميل يحاسب الكابتن مباشرة | بدأت مرحلة التسوية';
+  }
+
+  else if (action === 'CLOSE') {
+    if (currentStage !== 'SETTLEMENT') {
+      throw new Error('يجب تأكيد وصول العميل والانتقال للتسوية أولًا.');
+    }
+
+    const driverId = String(value('Assigned Driver ID','') || '');
+    const driverName = String(value('Assigned Driver Name','') || '');
+
+    if (!driverId) {
+      throw new Error('لا يمكن إغلاق المشوار بدون كابتن معيّن.');
+    }
+
+    const finalPrice = Number(
+      value('Final Price',0) ||
+      value('Estimated Price',0) ||
+      0
+    );
+
+    if (!(finalPrice > 0)) {
+      throw new Error('سعر المشوار غير مسجل.');
+    }
+
+    const finance = calculateRideFinanceV28_(finalPrice);
+    driverCommissionEarned = finance.commission;
+
+    Object.assign(sheetPatch,{
+      'Final Price':finance.price,
+      'Driver Cost':finance.driverDue,
+      'Mashwarak Commission':finance.commission,
+      'Commission Rate':finance.commissionRate,
+      'Status':'COMPLETED',
+      'Workflow Stage':'COMPLETED',
+      'Completed At':now
+    });
+
+    Object.assign(ridePatch,{
+      finalPrice:finance.price,
+      driverCost:finance.driverDue,
+      captainNet:finance.driverDue,
+      mashwarakCommission:finance.commission,
+      commissionRate:finance.commissionRate,
+      status:'COMPLETED',
+      workflowStage:'COMPLETED',
+      completedAt:fmtDateTime_(now),
+      rideCommissionDue:finance.commission,
+      netProfit:finance.commission
+    });
+
+    nextStage = 'COMPLETED';
+    actionName = 'RIDE_CLOSED';
+    detail =
+      'تم إغلاق المشوار بعد تأكيد الوصول تليفونيًا'
+      + ' | العميل دفع للكابتن مباشرة: ' + finance.price + ' ج.م'
+      + ' | عمولة مشوارك المستحقة على الكابتن: ' + finance.commission + ' ج.م'
+      + ' | صافي الكابتن: ' + finance.driverDue + ' ج.م'
+      + ' | الكابتن: ' + driverName + ' [' + driverId + ']';
+  }
+
+  else if (action === 'CANCEL') {
+    const reason = clean_(payload.reason);
+    if (!reason) throw new Error('سبب الإلغاء مطلوب.');
+
+    Object.assign(sheetPatch,{
+      'Status':'CANCELLED',
+      'Workflow Stage':'CANCELLED',
+      'Cancelled At':now,
+      'Cancel Reason':reason
+    });
+
+    Object.assign(ridePatch,{
+      status:'CANCELLED',
+      workflowStage:'CANCELLED',
+      cancelledAt:fmtDateTime_(now),
+      cancelReason:reason
+    });
+
+    nextStage = 'CANCELLED';
+    actionName = 'RIDE_CANCELLED';
+    detail = 'تم إلغاء المشوار | السبب: ' + reason;
+  }
+
+  else {
+    throw new Error('إجراء التشغيل غير معروف.');
+  }
+
+  rideApplyPatchV52_(sh,row,map,rowValues,sheetPatch);
+
+  logControlAction_(
+    user,
+    actionName,
+    'RIDE',
+    rideId,
+    detail
+  );
+
+  invalidateControlSnapshotV23_();
+
+  return {
+    success:true,
+    rideId:rideId,
+    previousStage:currentStage,
+    stage:nextStage,
+    status:rideWorkflowStatusForStageV50_(nextStage),
+    ridePatch:ridePatch,
+    driverCommissionEarned:driverCommissionEarned,
+    serverMs:new Date().getTime()-started
+  };
+}
+
+function correctRideWorkflowV50(token, rideId, stage, reason) {
+  const user = assertControlRole_(token,['OWNER']);
+  ensureRideOpsV25_();
+
+  rideId = clean_(rideId);
+  stage = String(stage || '').toUpperCase();
+  reason = clean_(reason);
+
+  if (!rideId) throw new Error('رقم المشوار غير موجود.');
+  if (!reason) throw new Error('اكتب سبب التصحيح الإداري.');
+
+  const valid = [
+    'NEW','CONTACTED','CONFIRMED','ASSIGNED',
+    'IN_PROGRESS','SETTLEMENT','COMPLETED','CANCELLED'
+  ];
+
+  if (valid.indexOf(stage) === -1) {
+    throw new Error('المرحلة المختارة غير صحيحة.');
+  }
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.RIDES);
+  const row = findRowById_(sh,rideId);
+  if (!row) throw new Error('المشوار غير موجود.');
+
+  const map = rideHeaderMapV25_(sh);
+  const rowValues = sh.getRange(row,1,1,sh.getLastColumn()).getValues()[0];
+
+  const oldStatus = String(
+    rideRowValueV52_(rowValues,map,'Status','NEW')
+  ).toUpperCase();
+
+  const oldStage = deriveRideWorkflowStageV50_(
+    oldStatus,
+    rideRowValueV52_(rowValues,map,'Workflow Stage',''),
+    rideRowValueV52_(rowValues,map,'Arrived At','')
+  );
+
+  const now = new Date();
+  const newStatus = rideWorkflowStatusForStageV50_(stage);
+
+  rideApplyPatchV52_(sh,row,map,rowValues,{
+    'Status':newStatus,
+    'Workflow Stage':stage,
+    'Updated At':now
+  });
+
+  logControlAction_(
+    user,
+    'RIDE_ADMIN_CORRECTION',
+    'RIDE',
+    rideId,
+    'تصحيح إداري من ' + oldStage + ' إلى ' + stage + ' | السبب: ' + reason
+  );
+
+  invalidateControlSnapshotV23_();
+
+  return {
+    success:true,
+    rideId:rideId,
+    stage:stage,
+    status:newStatus,
+    ridePatch:{
+      workflowStage:stage,
+      status:newStatus,
+      updatedAt:fmtDateTime_(now)
+    }
+  };
+}
+
+function rideHeaderMapV25_(sh) {
+  const headers = sh.getRange(1,1,1,sh.getLastColumn()).getDisplayValues()[0];
+  const map = Object.create(null);
+
+  headers.forEach(function(h,i){
+    const key = String(h || '').trim().toLowerCase();
+    if (key) map[key] = i + 1;
+  });
+
+  return map;
+}
+
+function rideSetV25_(sh,row,map,header,value) {
+  const col = map[String(header).toLowerCase()];
+  if (!col) throw new Error('عمود غير موجود: ' + header);
+  sh.getRange(row,col).setValue(value);
+}
+
+function getAdminRidesLegacyForV2_() {
+  ensureRideOpsV25_();
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.RIDES);
+  const values = sh.getDataRange().getValues();
+  if (!values.length) return [];
+
+  const headers = values[0].map(function(h){ return String(h || '').trim(); });
+  const headerMap = Object.create(null);
+
+  headers.forEach(function(h,i){
+    if (h) headerMap[h.toLowerCase()] = i;
+  });
+
+  function headerVal(row,name,fallback) {
+    const i = headerMap[String(name).toLowerCase()];
+    if (typeof i === 'undefined') return fallback;
+    const v = row[i];
+    return (v === null || typeof v === 'undefined') ? fallback : v;
+  }
+
+  const out=[];
+
+  for (let i=1;i<values.length;i++) {
+    const r=values[i];
+    if (!r[0]) continue;
+
+    const effectivePrice = Number(r[12] || r[11] || 0);
+    const finance = calculateRideFinanceV28_(effectivePrice);
+
+    out.push({
+      rideId:String(r[0]),
+      createdAt:fmtDateTime_(r[1]),
+      customerName:String(r[2] || ''),
+      mobile:String(r[3] || ''),
+      tripType:String(r[4] || ''),
+      from:String(r[5] || ''),
+      to:String(r[6] || ''),
+      date:adminCellText_(r[7]),
+      time:adminTimeText_(r[8]),
+      passengers:r[9],
+      notes:String(r[10] || ''),
+      estimatedPrice:r[11],
+      finalPrice:r[12],
+      assignedDriverId:String(r[13] || ''),
+      assignedDriverName:String(r[14] || ''),
+      status:String(r[15] || 'NEW').toUpperCase(),
+      adminNotes:String(r[16] || ''),
+      updatedAt:fmtDateTime_(r[17]),
+      returnDate:adminCellText_(r[18]),
+      returnTime:adminTimeText_(r[19]),
+      waiting:String(r[20] || ''),
+      waitingDetails:String(r[21] || ''),
+      extras:String(r[23] || ''),
+      captainAgePreference:String(r[24] || ''),
+      captainAgeMin:r[25],
+      captainAgeMax:r[26],
+      customerAcPreference:String(headerVal(r,'Customer AC Preference','') || ''),
+      driverCost:finance.driverDue,
+      mashwarakCommission:finance.commission,
+      commissionRate:finance.commissionRate,
+      workflowStage:deriveRideWorkflowStageV50_(
+        String(r[15] || 'NEW'),
+        String(headerVal(r,'Workflow Stage','') || ''),
+        headerVal(r,'Arrived At','')
+      ),
+      contactedAt:fmtDateTime_(headerVal(r,'Contacted At','')),
+      confirmedAt:fmtDateTime_(headerVal(r,'Confirmed At','')),
+      assignedAt:fmtDateTime_(headerVal(r,'Assigned At','')),
+      startedAt:fmtDateTime_(headerVal(r,'Started At','')),
+      arrivedAt:fmtDateTime_(headerVal(r,'Arrived At','')),
+      completedAt:fmtDateTime_(headerVal(r,'Completed At','')),
+      cancelledAt:fmtDateTime_(headerVal(r,'Cancelled At','')),
+      cancelReason:String(headerVal(r,'Cancel Reason','') || '')
+    });
+  }
+
+  out.sort(function(a,b){
+    return String(b.rideId).localeCompare(String(a.rideId));
+  });
+
+  return out;
+}
+
+function getAdminDriversLegacyForV2_() {
+  const sh = getDb_().getSheetByName(APP.SHEETS.DRIVERS);
+  if (!sh || sh.getLastRow() < 2) return [];
+
+  const values = sh.getDataRange().getValues();
+  const headers = values[0].map(function(h){ return String(h || '').trim(); });
+  const map = Object.create(null);
+
+  headers.forEach(function(h, i){
+    if (h) map[h.toLowerCase()] = i;
+  });
+
+  function idx(names) {
+    for (let i=0;i<names.length;i++) {
+      const k = String(names[i]).toLowerCase();
+      if (Object.prototype.hasOwnProperty.call(map,k)) return map[k];
+    }
+    return -1;
+  }
+
+  function val(row, names, fallback) {
+    const i = idx(names);
+    if (i < 0) return fallback;
+    const v = row[i];
+    return (v === null || typeof v === 'undefined') ? fallback : v;
+  }
+
+  const out=[];
+
+  for (let i=1;i<values.length;i++) {
+    const r=values[i];
+
+    const driverId = String(val(r,['Driver ID','DriverId','ID'],'') || '').trim();
+    const fullName = String(val(r,['Full Name','Name','Captain Name'],'') || '').trim();
+    const mobile = String(val(r,['Mobile WhatsApp','Mobile','Phone','WhatsApp'],'') || '').trim();
+
+    // Do not discard legacy rows just because Driver ID is blank.
+    // A legacy row with name/mobile still appears in Control Center.
+    if (!driverId && !fullName && !mobile) continue;
+
+    const statusRaw = String(val(r,['Admin Status','Status'],'UNDER_REVIEW') || 'UNDER_REVIEW').toUpperCase();
+
+    out.push({
+      driverId: driverId || ('LEGACY-' + Utilities.formatString('%05d', i)),
+      createdAt: fmtDateTime_(val(r,['Created At','Created','Registration Date'],'') || ''),
+      fullName: fullName,
+      mobile: mobile,
+      cityArea: String(val(r,['City Area','City','Area'],'') || ''),
+      carType: String(val(r,['Car Type','Vehicle Type'],'') || ''),
+      brandModel: String(val(r,['Brand Model','Brand/Model','Car Model'],'') || ''),
+      year: val(r,['Year','Model Year'],''),
+      color: String(val(r,['Color','Car Color'],'') || ''),
+      seats: val(r,['Seats','Capacity'],''),
+      acWorking: String(val(r,['AC Working','AC'],'') || ''),
+      availabilityType: String(val(r,['Availability Type','Availability'],'') || ''),
+      availabilityDetails: String(val(r,['Availability Details','Available Times'],'') || ''),
+      notes: String(val(r,['Notes','Captain Notes'],'') || ''),
+      adminStatus: statusRaw || 'UNDER_REVIEW',
+      adminNotes: String(val(r,['Admin Notes','Review Notes'],'') || ''),
+      updatedAt: fmtDateTime_(val(r,['Updated At','Last Updated'],'') || ''),
+      nationalIdFrontUrl: String(val(r,['National ID Front URL','National ID Front'],'') || ''),
+      nationalIdBackUrl: String(val(r,['National ID Back URL','National ID Back'],'') || ''),
+      driverLicenseUrl: String(val(r,['Driver License URL','Driving License URL','Driver License'],'') || ''),
+      carLicenseUrl: String(val(r,['Car License URL','Vehicle License URL','Car License'],'') || ''),
+      carPhotoUrl: String(val(r,['Car Photo URL','Vehicle Photo URL','Car Photo'],'') || ''),
+      driverLicenseFrontUrl: String(val(r,['Driver License Front URL'],'') || val(r,['Driver License URL'],'') || ''),
+      driverLicenseBackUrl: String(val(r,['Driver License Back URL'],'') || ''),
+      carLicenseFrontUrl: String(val(r,['Car License Front URL'],'') || val(r,['Car License URL'],'') || ''),
+      carLicenseBackUrl: String(val(r,['Car License Back URL'],'') || ''),
+      liveSelfieUrl: String(val(r,['Live Selfie URL'],'') || ''),
+      captainWithCarUrl: String(val(r,['Captain With Car URL'],'') || ''),
+      termsAccepted: val(r,['Terms Accepted'],''),
+      age: val(r,['Age','Captain Age'],''),
+      brand: String(val(r,['Brand','Car Brand'],'') || ''),
+      model: String(val(r,['Model','Car Model Name'],'') || '')
+    });
+  }
+
+  out.sort(function(a,b){
+    return String(b.createdAt || b.driverId).localeCompare(String(a.createdAt || a.driverId));
+  });
+
+  return out;
+}
+
+// Diagnostic helper for Control Center captain data.
+// Run only if needed from Apps Script editor.
+function diagnoseControlCaptainsV2() {
+  const sh = getDb_().getSheetByName(APP.SHEETS.DRIVERS);
+  if (!sh) return {sheetFound:false};
+  const vals = sh.getDataRange().getDisplayValues();
+  return {
+    sheetFound:true,
+    rows:Math.max(0, vals.length-1),
+    headers:vals.length ? vals[0] : [],
+    sample:vals.length > 1 ? vals[1] : [],
+    parsedCount:getAdminDriversLegacyForV2_().length
+  };
+}
+
+function createCompatAdminTokenV2_(user) {
+  const token=Utilities.getUuid();
+  CacheService.getScriptCache().put('ADMIN_' + token,'1',300);
+  return token;
+}
+
+function normalizeSearchV2_(v) {
+  return String(v || '')
+    .toLowerCase()
+    .replace(/[أإآ]/g,'ا')
+    .replace(/ى/g,'ي')
+    .replace(/ة/g,'ه')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
+function nextSimpleIdV2_(prefix, sh) {
+  const last=Math.max(0,sh.getLastRow()-1)+1;
+  return prefix + Utilities.formatString('%06d',last);
+}
+
+function logControlAction_(user, action, entityType, entityId, details) {
+  const who = user ? (user.name + ' [' + user.userId + ']') : '';
+  log_(action,entityType,entityId,who + ' | ' + String(details || ''));
+}
+
+
+/* ==========================================================
+   CONTROL CENTER V2.3 | PERFORMANCE CORE
+   One snapshot request | shared short cache | local UI filters
+========================================================== */
+
+function invalidateControlSnapshotV23_() {
+  const c = CacheService.getScriptCache();
+  [
+    'MW23_RIDES',
+    'MW23_DRIVERS',
+    'MW23_TX',
+    'MW23_CUSTOMERS',
+    'MW23_ACTIVITY',
+    'MW23_USERS',
+    'CONTROL_ALERT_FEED_V27'
+  ].forEach(function(k){
+    try { c.remove(k); } catch(e) {}
+  });
+}
+
+function cacheJsonV23_(key, ttlSeconds, builder) {
+  const cache = CacheService.getScriptCache();
+
+  try {
+    const raw = cache.get(key);
+    if (raw) return JSON.parse(raw);
+  } catch(e) {}
+
+  const value = builder();
+  try {
+    const encoded = JSON.stringify(value);
+    // Apps Script CacheService item limit is finite.
+    // Cache only reasonably sized datasets; otherwise return normally.
+    if (encoded.length < 90000) {
+      cache.put(key, encoded, ttlSeconds);
+    }
+  } catch(e) {}
+
+  return value;
+}
+
+function getControlCustomersRawV23_() {
+  ensureControlV2Ready_();
+  ensureCustomerPhoneIntegrityV29_();
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.CUSTOMERS);
+  if (!sh || sh.getLastRow() < 2) return [];
+
+  const vals = sh.getDataRange().getValues();
+  const out = [];
+
+  for (let i=1;i<vals.length;i++) {
+    const r = vals[i];
+    if (!r[0]) continue;
+
+    out.push({
+      customerId:String(r[0]),
+      name:String(r[1] || ''),
+      mobile:customerDisplayPhoneV29_(r[2]),
+      createdAt:fmtDateTime_(r[3]),
+      lastRideAt:fmtDateTime_(r[4]),
+      totalRides:Number(r[5] || 0),
+      completedRides:Number(r[6] || 0),
+      cancelledRides:Number(r[7] || 0),
+      adminNotes:String(r[8] || ''),
+      active:r[9] === true || String(r[9]).toUpperCase() === 'TRUE'
+    });
+  }
+
+  out.sort(function(a,b){
+    return String(b.lastRideAt || '').localeCompare(String(a.lastRideAt || ''));
+  });
+
+  return out;
+}
+
+function getControlActivityRawV23_(limit) {
+  limit = Math.max(20,Math.min(200,Number(limit || 100)));
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.LOGS);
+  if (!sh || sh.getLastRow() < 2) return [];
+
+  const vals = sh.getDataRange().getValues();
+  const out = [];
+
+  for (let i=vals.length-1;i>=1 && out.length<limit;i--) {
+    const r = vals[i];
+    if (!r[0]) continue;
+
+    out.push({
+      timestamp:fmtDateTime_(r[0]),
+      action:String(r[1] || ''),
+      entityType:String(r[2] || ''),
+      entityId:String(r[3] || ''),
+      details:String(r[4] || '')
+    });
+  }
+
+  return out;
+}
+
+function getControlUsersRawV23_() {
+  ensureControlV2Ready_();
+
+  const sh = getDb_().getSheetByName(APP.SHEETS.ADMIN_USERS);
+  if (!sh || sh.getLastRow() < 2) return [];
+
+  const vals = sh.getDataRange().getValues();
+  const out = [];
+
+  for (let i=1;i<vals.length;i++) {
+    const r = vals[i];
+    if (!r[0]) continue;
+
+    out.push({
+      userId:String(r[0]),
+      name:String(r[1] || ''),
+      username:String(r[2] || ''),
+      role:String(r[4] || 'VIEWER'),
+      active:r[5] === true || String(r[5]).toUpperCase() === 'TRUE',
+      createdAt:fmtDateTime_(r[6]),
+      lastLogin:fmtDateTime_(r[7]),
+      phone:String(r[8] || ''),
+      notes:String(r[9] || '')
+    });
+  }
+
+  return out;
+}
+
+function enrichControlDataV23_(rides, drivers, tx) {
+  const expenseByRide = Object.create(null);
+  const tripCounts = Object.create(null);
+  const completedCounts = Object.create(null);
+  const accounts = calculateAllDriverCommissionAccountsV51_(rides,tx);
+
+  tx.forEach(function(t){
+    if (t.status !== 'CONFIRMED') return;
+
+    if (
+      t.type === 'EXPENSE' &&
+      t.direction === 'OUT' &&
+      t.rideId
+    ) {
+      expenseByRide[t.rideId] =
+        (expenseByRide[t.rideId] || 0) + Number(t.amount || 0);
+    }
+  });
+
+  rides.forEach(function(r){
+    const price = Number(r.finalPrice || r.estimatedPrice || 0);
+    const finance = calculateRideFinanceV28_(price);
+
+    r.driverCost = finance.driverDue;
+    r.captainNet = finance.driverDue;
+    r.mashwarakCommission = finance.commission;
+    r.commissionRate = finance.commissionRate;
+
+    r.customerPaymentMode = 'DIRECT_TO_DRIVER';
+    r.customerPaid = 0;
+    r.customerBalance = 0;
+    r.driverPaid = 0;
+    r.driverBalance = 0;
+    r.paymentStatus = 'DIRECT_TO_DRIVER';
+    r.paymentMethods = [];
+    r.paymentMethodLabel = 'العميل يدفع للكابتن مباشرة';
+
+    r.rideCommissionDue = r.status === 'COMPLETED'
+      ? finance.commission
+      : 0;
+
+    r.rideExpenses = Number(expenseByRide[r.rideId] || 0);
+    r.netProfit = roundMoneyV28_(finance.commission-r.rideExpenses);
+
+    if (r.assignedDriverId) {
+      tripCounts[r.assignedDriverId] =
+        (tripCounts[r.assignedDriverId] || 0) + 1;
+
+      if (r.status === 'COMPLETED') {
+        completedCounts[r.assignedDriverId] =
+          (completedCounts[r.assignedDriverId] || 0) + 1;
+      }
+    }
+  });
+
+  drivers.forEach(function(d){
+    const acc = accounts[d.driverId] || {
+      commissionDue:0,
+      commissionPaid:0,
+      commissionOutstanding:0
+    };
+
+    d.totalTrips = Number(tripCounts[d.driverId] || 0);
+    d.completedTrips = Number(completedCounts[d.driverId] || 0);
+    d.commissionDue = Number(acc.commissionDue || 0);
+    d.commissionPaid = Number(acc.commissionPaid || 0);
+    d.commissionOutstanding = Number(acc.commissionOutstanding || 0);
+    d.paidToDriver = 0;
+  });
+
+  return {rides:rides,drivers:drivers};
+}
+
+function buildControlDashboardV23_(rides, drivers, tx) {
+  const today = Utilities.formatDate(new Date(), APP.TZ, 'yyyy-MM-dd');
+
+  const counts = {
+    NEW:0,
+    CONTACTED:0,
+    CONFIRMED:0,
+    ASSIGNED:0,
+    IN_PROGRESS:0,
+    COMPLETED:0,
+    CANCELLED:0
+  };
+
+  let commissionCollectedToday = 0;
+  let completedCommissionTotal = 0;
+  let expensesToday = 0;
+  let legacyDriverPaidToday = 0;
+  let driverCommissionOutstanding = 0;
+  let driversUnderReview = 0;
+  let driversApproved = 0;
+
+  rides.forEach(function(r){
+    if (Object.prototype.hasOwnProperty.call(counts,r.status)) counts[r.status]++;
+
+    if (r.status === 'COMPLETED') {
+      completedCommissionTotal += Number(r.mashwarakCommission || 0);
+    }
+  });
+
+  drivers.forEach(function(d){
+    if (d.adminStatus === 'UNDER_REVIEW') driversUnderReview++;
+    if (d.adminStatus === 'APPROVED') driversApproved++;
+
+    driverCommissionOutstanding += Number(
+      d.commissionOutstanding || 0
+    );
+  });
+
+  tx.forEach(function(t){
+    if (t.status !== 'CONFIRMED' || t.createdDate !== today) return;
+
+    if (
+      t.type === 'DRIVER_COMMISSION_PAYMENT' &&
+      t.direction === 'IN'
+    ) {
+      commissionCollectedToday += Number(t.amount || 0);
+    } else if (
+      t.type === 'EXPENSE' &&
+      t.direction === 'OUT'
+    ) {
+      expensesToday += Number(t.amount || 0);
+    } else if (
+      t.type === 'DRIVER_PAYMENT' &&
+      t.direction === 'OUT'
+    ) {
+      legacyDriverPaidToday += Number(t.amount || 0);
+    }
+  });
+
+  return {
+    ridesTotal:rides.length,
+    newRides:counts.NEW,
+    contactedRides:counts.CONTACTED,
+    confirmedRides:counts.CONFIRMED,
+    assignedRides:counts.ASSIGNED,
+    inProgressRides:counts.IN_PROGRESS,
+    completedRides:counts.COMPLETED,
+    cancelledRides:counts.CANCELLED,
+
+    driversTotal:drivers.length,
+    driversUnderReview:driversUnderReview,
+    driversApproved:driversApproved,
+
+    revenueToday:roundMoneyV28_(commissionCollectedToday),
+    commissionCollectedToday:roundMoneyV28_(commissionCollectedToday),
+    completedCommissionTotal:roundMoneyV28_(completedCommissionTotal),
+    driverCommissionOutstanding:roundMoneyV28_(driverCommissionOutstanding),
+
+    expensesToday:roundMoneyV28_(expensesToday),
+    driverPaidToday:roundMoneyV28_(legacyDriverPaidToday),
+    netCashToday:roundMoneyV28_(
+      commissionCollectedToday-expensesToday-legacyDriverPaidToday
+    ),
+
+    customerOutstanding:0
+  };
+}
+
+function getControlSnapshot(token, forceRefresh) {
+  const started = new Date().getTime();
+  const user = getControlUser_(token);
+  ensureControlV2Ready_();
+  ensureRideOpsV25_();
+
+  if (forceRefresh === true) invalidateControlSnapshotV23_();
+
+  // Shared short cache means all admin users benefit from one recent read.
+  const rides = cacheJsonV23_('MW23_RIDES',45,function(){
+    return getAdminRidesLegacyForV2_();
+  });
+
+  const drivers = cacheJsonV23_('MW23_DRIVERS',45,function(){
+    return getAdminDriversLegacyForV2_();
+  });
+
+  const tx = cacheJsonV23_('MW23_TX',45,function(){
+    return getTransactionsRawV2_();
+  });
+
+  const customers = cacheJsonV23_('MW23_CUSTOMERS',45,function(){
+    return getControlCustomersRawV23_();
+  });
+
+  const activity = cacheJsonV23_('MW23_ACTIVITY',30,function(){
+    return getControlActivityRawV23_(100);
+  });
+
+  let users = [];
+  if (user.role === 'OWNER') {
+    users = cacheJsonV23_('MW23_USERS',60,function(){
+      return getControlUsersRawV23_();
+    });
+  }
+
+  const enriched = enrichControlDataV23_(rides,drivers,tx);
+  const enrichedCustomers = enrichCustomersFromRidesV29_(
+    customers,
+    enriched.rides
+  );
+
+  const dashboard = buildControlDashboardV23_(
+    enriched.rides,
+    enriched.drivers,
+    tx
+  );
+
+  return {
+    success:true,
+    user:user,
+    dashboard:dashboard,
+    rides:enriched.rides,
+    drivers:enriched.drivers,
+    customers:enrichedCustomers,
+    transactions:tx,
+    activity:activity,
+    users:users,
+    syncAt:Utilities.formatDate(new Date(),APP.TZ,'dd/MM/yyyy HH:mm:ss'),
+    serverMs:new Date().getTime()-started
+  };
+}
+
+
+function productionResetPreviewV53(token) {
+  assertControlRole_(token,['OWNER']);
+
+  const ss = getDb_();
+  const counts = {};
+
+  [
+    APP.SHEETS.RIDES,
+    APP.SHEETS.DRIVERS,
+    APP.SHEETS.CUSTOMERS,
+    APP.SHEETS.TRANSACTIONS,
+    APP.SHEETS.LOGS,
+    APP.SHEETS.NOTIFICATIONS
+  ].forEach(function(name){
+    const sh = ss.getSheetByName(name);
+    counts[name] = sh ? Math.max(0,sh.getLastRow()-1) : 0;
+  });
+
+  const prices = ss.getSheetByName(APP.SHEETS.PRICES);
+  const users = ss.getSheetByName(APP.SHEETS.ADMIN_USERS);
+
+  return {
+    success:true,
+    dataEpoch:dataEpochV53_(),
+    counts:counts,
+    retained:{
+      prices:prices ? Math.max(0,prices.getLastRow()-1) : 0,
+      adminUsers:users ? Math.max(0,users.getLastRow()-1) : 0,
+      settings:true
+    }
+  };
+}
+
+function clearOperationalSheetV53_(ss, sheetName) {
+  const sh = ss.getSheetByName(sheetName);
+  if (!sh) return 0;
+
+  const lastRow = sh.getLastRow();
+  const lastCol = Math.max(1,sh.getLastColumn());
+  const count = Math.max(0,lastRow-1);
+
+  if (count > 0) {
+    sh.getRange(2,1,count,lastCol).clearContent();
+  }
+
+  return count;
+}
+
+function archiveCaptainDocsFolderV53_(stamp) {
+  const props = PropertiesService.getScriptProperties();
+  const folderId = props.getProperty('MASHWARAK_CAPTAIN_DOCS_FOLDER_ID');
+
+  if (!folderId) {
+    return {archived:false,url:''};
+  }
+
+  try {
+    const folder = DriveApp.getFolderById(folderId);
+    folder.setName(
+      'Mashwarak - Captain Documents - TEST BACKUP - ' + stamp
+    );
+
+    const url = folder.getUrl();
+    props.deleteProperty('MASHWARAK_CAPTAIN_DOCS_FOLDER_ID');
+
+    return {archived:true,url:url};
+  } catch(e) {
+    throw new Error(
+      'تعذر حفظ نسخة مستندات الكباتن قبل التهيئة. لم يتم مسح البيانات.'
+    );
+  }
+}
+
+function productionResetV53(token, confirmationText) {
+  const user = assertControlRole_(token,['OWNER']);
+
+  if (clean_(confirmationText) !== 'بدء التشغيل الفعلي') {
+    throw new Error('عبارة التأكيد غير صحيحة. لم يتم تنفيذ أي مسح.');
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    throw new Error('يوجد إجراء آخر يعمل الآن. حاول مرة أخرى بعد لحظات.');
+  }
+
+  try {
+    const ss = getDb_();
+    const stamp = Utilities.formatDate(
+      new Date(),
+      APP.TZ,
+      'yyyy-MM-dd HH-mm-ss'
+    );
+
+    let backupFile;
+
+    try {
+      backupFile = DriveApp
+        .getFileById(ss.getId())
+        .makeCopy('Mashwarak - PRE PRODUCTION BACKUP - ' + stamp);
+    } catch(e) {
+      throw new Error(
+        'تعذر إنشاء النسخة الاحتياطية. تم إلغاء التهيئة بدون مسح أي بيانات.'
+      );
+    }
+
+    // Keep the test captain documents as a separate backup folder.
+    const docsBackup = archiveCaptainDocsFolderV53_(stamp);
+
+    const cleared = {};
+
+    [
+      APP.SHEETS.RIDES,
+      APP.SHEETS.DRIVERS,
+      APP.SHEETS.CUSTOMERS,
+      APP.SHEETS.TRANSACTIONS,
+      APP.SHEETS.LOGS,
+      APP.SHEETS.NOTIFICATIONS
+    ].forEach(function(name){
+      cleared[name] = clearOperationalSheetV53_(ss,name);
+    });
+
+    const props = PropertiesService.getScriptProperties();
+
+    // Reset operational sequences only. Prices and admin users are retained.
+    [
+      'SEQ_' + APP.SHEETS.RIDES,
+      'SEQ_' + APP.SHEETS.DRIVERS,
+      'SEQ_' + APP.SHEETS.NOTIFICATIONS
+    ].forEach(function(key){
+      props.deleteProperty(key);
+    });
+
+    const epoch =
+      'PROD-' + new Date().getTime() + '-' + Utilities.getUuid().slice(0,8);
+
+    props.setProperty('MASHWARAK_DATA_EPOCH_V53',epoch);
+
+    invalidateControlSnapshotV23_();
+
+    const cache = CacheService.getScriptCache();
+    try { cache.remove('CONTROL_ALERT_FEED_V27'); } catch(e) {}
+
+    // Create a fresh active docs folder immediately.
+    const freshDocsFolder = getCaptainDocsRoot_();
+
+    logControlAction_(
+      user,
+      'PRODUCTION_RESET',
+      'SYSTEM',
+      epoch,
+      'Production reset completed after automatic backup'
+    );
+
+    invalidateControlSnapshotV23_();
+
+    return {
+      success:true,
+      dataEpoch:epoch,
+      cleared:cleared,
+      backupName:backupFile.getName(),
+      backupUrl:backupFile.getUrl(),
+      docsBackupUrl:docsBackup.url || '',
+      freshDocsFolderUrl:freshDocsFolder.getUrl(),
+      completedAt:Utilities.formatDate(
+        new Date(),
+        APP.TZ,
+        'yyyy-MM-dd HH:mm:ss'
+      )
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function sendMashwarakAdminPush_(title, message, eventType, entityId) {
+  const props=PropertiesService.getScriptProperties();
+  const projectId=props.getProperty('MASHWARAK_FCM_PROJECT_ID');
+  if (!projectId) return {success:false,skipped:true,error:'Firebase not configured'};
+
+  const accessToken=getMashwarakFcmAccessToken_();
+  const url='https://fcm.googleapis.com/v1/projects/' + encodeURIComponent(projectId) + '/messages:send';
+
+  const payload={
+    message:{
+      topic:'mashwarak_admin_all',
+      data:{
+        title:String(title || 'مشوارك للإدارة'),
+        message:String(message || ''),
+        eventType:String(eventType || ''),
+        entityId:String(entityId || '')
+      },
+      android:{
+        priority:'HIGH'
+      }
+    }
+  };
+
+  const res=UrlFetchApp.fetch(url,{
+    method:'post',
+    contentType:'application/json',
+    headers:{Authorization:'Bearer ' + accessToken},
+    payload:JSON.stringify(payload),
+    muteHttpExceptions:true
+  });
+
+  const status=res.getResponseCode();
+  if (status<200 || status>=300) {
+    throw new Error('FCM Admin ' + status + ': ' + res.getContentText());
+  }
+
+  return {success:true};
+}
