@@ -194,7 +194,7 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
         }
         val suggestionsScroll = ScrollView(this).apply {
             isFillViewport = false
-            addView(suggestionsList, ScrollView.LayoutParams(-1, -2))
+            addView(suggestionsList, FrameLayout.LayoutParams(-1, -2))
         }
         suggestionsCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
