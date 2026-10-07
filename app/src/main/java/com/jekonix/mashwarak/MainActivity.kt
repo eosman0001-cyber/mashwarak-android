@@ -74,7 +74,7 @@ class MainActivity : AppCompatActivity() {
     private var openNotificationsAfterLoad = false
     private var nativeBackRequestInFlight = false
 
-    // V1.12.2 | Smart Location - fast GPS + structured area metadata
+    // V1.13.0 | Smart Location - native Google Maps picker + fast GPS
     private data class SharedLocation(val lat: Double, val lng: Double, val label: String = "")
     private var pendingSharedDestination: SharedLocation? = null
     private var pendingGeoOrigin: String? = null
@@ -122,6 +122,27 @@ class MainActivity : AppCompatActivity() {
         }
 
         fileCallback = null
+    }
+
+    private val nativeLocationPicker = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode != RESULT_OK) return@registerForActivityResult
+        val data = result.data ?: return@registerForActivityResult
+        val mode = data.getStringExtra(LocationPickerActivity.EXTRA_MODE).orEmpty().uppercase().let { if (it == "FROM") "FROM" else "TO" }
+        val lat = data.getDoubleExtra(LocationPickerActivity.EXTRA_LAT, Double.NaN)
+        val lng = data.getDoubleExtra(LocationPickerActivity.EXTRA_LNG, Double.NaN)
+        if (lat.isNaN() || lng.isNaN()) return@registerForActivityResult
+        broadcastNativePickerResult(
+            mode = mode,
+            lat = lat,
+            lng = lng,
+            label = data.getStringExtra(LocationPickerActivity.EXTRA_LABEL).orEmpty(),
+            governorate = data.getStringExtra(LocationPickerActivity.EXTRA_GOVERNORATE).orEmpty(),
+            center = data.getStringExtra(LocationPickerActivity.EXTRA_CENTER).orEmpty(),
+            locality = data.getStringExtra(LocationPickerActivity.EXTRA_LOCALITY).orEmpty(),
+            subLocality = data.getStringExtra(LocationPickerActivity.EXTRA_SUB_LOCALITY).orEmpty()
+        )
     }
 
     private val notificationPermission =
@@ -577,6 +598,76 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun requestCurrentLocation() {
             runOnUiThread { requestNativeCurrentLocation() }
+        }
+
+        @JavascriptInterface
+        fun openNativePicker(mode: String, lat: String, lng: String, label: String) {
+            runOnUiThread {
+                launchNativeLocationPicker(
+                    mode = if (mode.uppercase() == "FROM") "FROM" else "TO",
+                    lat = lat.toDoubleOrNull(),
+                    lng = lng.toDoubleOrNull(),
+                    label = label
+                )
+            }
+        }
+    }
+
+    private fun launchNativeLocationPicker(mode: String, lat: Double?, lng: Double?, label: String) {
+        val intent = Intent(this, LocationPickerActivity::class.java).apply {
+            putExtra(LocationPickerActivity.EXTRA_MODE, mode)
+            if (lat != null) putExtra(LocationPickerActivity.EXTRA_LAT, lat)
+            if (lng != null) putExtra(LocationPickerActivity.EXTRA_LNG, lng)
+            putExtra(LocationPickerActivity.EXTRA_LABEL, label)
+        }
+        nativeLocationPicker.launch(intent)
+    }
+
+    private fun broadcastNativePickerResult(
+        mode: String,
+        lat: Double,
+        lng: Double,
+        label: String,
+        governorate: String,
+        center: String,
+        locality: String,
+        subLocality: String
+    ) {
+        if (!::webView.isInitialized) return
+        val modeJson = JSONObject.quote(mode)
+        val labelJson = JSONObject.quote(label)
+        val governorateJson = JSONObject.quote(governorate)
+        val centerJson = JSONObject.quote(center)
+        val localityJson = JSONObject.quote(locality)
+        val subLocalityJson = JSONObject.quote(subLocality)
+        val js = """
+            (function(){
+              try{
+                var message={
+                  type:'mashwarak-native-picker-result',
+                  mode:$modeJson,
+                  lat:$lat,
+                  lng:$lng,
+                  label:$labelJson,
+                  governorate:$governorateJson,
+                  center:$centerJson,
+                  locality:$localityJson,
+                  subLocality:$subLocalityJson,
+                  source:'ANDROID_NATIVE_MAP'
+                };
+                var seen=[];
+                function walk(w,d){
+                  if(!w||d>12||seen.indexOf(w)>=0)return;
+                  seen.push(w);try{w.postMessage(message,'*')}catch(e){}
+                  var n=0;try{n=w.length||0}catch(e){}
+                  for(var i=0;i<n;i++){try{walk(w[i],d+1)}catch(e){}}
+                }
+                walk(window,0);
+              }catch(e){}
+            })();
+        """.trimIndent()
+        listOf(0L, 400L, 1200L).forEach { delay ->
+            webView.postDelayed({ if (::webView.isInitialized) webView.evaluateJavascript(js, null) }, delay)
         }
     }
 

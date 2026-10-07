@@ -5456,7 +5456,7 @@ button[onclick*="openScreen('priceList')"],button[onclick*="drawerGo('priceList'
             <input id="rideFromOther" placeholder="اكتب القرية أو المنطقة" oninput="syncRideFrom()">
           </div>
           <button type="button" class="mwMapPickBtn" onclick="openMashwarakMapPicker('FROM')">
-            <span>🗺️</span><b>حدد نقطة الانطلاق على الخريطة</b>
+            <span>📍</span><b>استخدم موقعي الحالي / حدده بدقة</b>
           </button>
           <div id="rideFromMapChoice" class="mwMapChoice" aria-live="polite"></div>
         </div>
@@ -5495,7 +5495,7 @@ button[onclick*="openScreen('priceList')"],button[onclick*="drawerGo('priceList'
           </div>
           <input id="rideToDetail" type="hidden" value="">
           <button type="button" class="mwMapPickBtn mwMapPickBtnGold" onclick="openMashwarakMapPicker('TO')">
-            <span>📍</span><b>حدد الوجهة على الخريطة</b>
+            <span>🔎</span><b>ابحث عن الوجهة أو حددها</b>
           </button>
           <div id="rideToMapChoice" class="mwMapChoice" aria-live="polite"></div>
         </div>
@@ -6563,13 +6563,13 @@ const usageTourSteps=[
     step:1,
     target:'#rideFromGroup',
     title:'ابدأ من مكان الانطلاق',
-    text:'اختر المكان من القوائم أو اضغط «حدد نقطة الانطلاق على الخريطة» لتسجيل الموقع بدقة.'
+    text:'استخدم موقعك الحالي مباشرة، أو استخدم الاختيارات اليدوية كبديل.'
   },
   {
     step:1,
     target:'#rideToGroup',
     title:'حدد وجهتك',
-    text:'اختر الوجهة من القوائم أو اضغط «حدد الوجهة على الخريطة». ويمكن استيراد لوكيشن مشترك من تطبيق مشوارك.'
+    text:'ابحث عن الوجهة أو حددها بدقة، ويمكن استخدام الاختيارات اليدوية كبديل.'
   },
   {
     step:2,
@@ -9831,7 +9831,7 @@ document.addEventListener('DOMContentLoaded',function(){
 
 <script>
 /* =========================================================
-   MASHWARAK V2.5.2 | SMART LOCATION AUTO AREA
+   MASHWARAK V2.6.0 | NATIVE LOCATION PICKER
    - Lazy Leaflet/OpenStreetMap picker for FROM / TO.
    - Exact lat/lng + map URL saved with ride.
    - Can import coordinates from map links.
@@ -9957,6 +9957,19 @@ document.addEventListener('DOMContentLoaded',function(){
   window.openMashwarakMapPicker=function(mode,initialPoint){
     mwMapMode=String(mode||'TO').toUpperCase()==='FROM'?'FROM':'TO';
     mwPendingLocationMeta=null;
+    const nativePoint=initialPoint||getExisting(mwMapMode);
+    try{
+      if(window.MashwarakLocation&&typeof window.MashwarakLocation.openNativePicker==='function'){
+        const nativeLabel=document.getElementById(sidePrefix(mwMapMode)+'MapLabel')?.value||'';
+        window.MashwarakLocation.openNativePicker(
+          mwMapMode,
+          nativePoint?String(nativePoint.lat):'',
+          nativePoint?String(nativePoint.lng):'',
+          nativeLabel
+        );
+        return;
+      }
+    }catch(_){ }
     const modal=document.getElementById('mwMapPicker');
     const title=document.getElementById('mwMapPickerTitle');
     const label=document.getElementById('mwMapLabelInput');
@@ -10142,6 +10155,15 @@ document.addEventListener('DOMContentLoaded',function(){
   window.addEventListener('message',function(event){
     const data=event.data||{};
     if(data.type==='mashwarak-import-destination-location')importDestination(data);
+    if(data.type==='mashwarak-native-picker-result'){
+      const nativeMode=String(data.mode||'TO').toUpperCase()==='FROM'?'FROM':'TO';
+      autoFillLocationSelectors(nativeMode,data);
+      setMapSelection(nativeMode,data.lat,data.lng,data.label||'',data.source||'ANDROID_NATIVE_MAP');
+      try{
+        if(nativeMode==='FROM')document.getElementById('rideFromGroup')?.scrollIntoView({behavior:'smooth',block:'center'});
+        else document.getElementById('rideToGroup')?.scrollIntoView({behavior:'smooth',block:'center'});
+      }catch(_){ }
+    }
     if(data.type==='mashwarak-current-location-result'){
       placeMarker(data.lat,data.lng,true);
       if(data.governorate||data.adminArea||data.center||data.subAdminArea||data.locality){

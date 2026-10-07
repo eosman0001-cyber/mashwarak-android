@@ -20,8 +20,17 @@
         android:label="مشوارك"
         android:theme="@style/Theme.Mashwarak">
 
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${MAPS_API_KEY}"/>
+
         <activity
             android:name=".CameraCaptureActivity"
+            android:screenOrientation="portrait"
+            android:exported="false"/>
+
+        <activity
+            android:name=".LocationPickerActivity"
             android:screenOrientation="portrait"
             android:exported="false"/>
 

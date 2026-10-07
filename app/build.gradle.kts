@@ -12,8 +12,8 @@ if (cfgFile.exists()) cfgFile.inputStream().use { cfg.load(it) }
 fun cfg(name: String, fallback: String = "") =
     (cfg.getProperty(name) ?: fallback).replace("\\", "\\\\").replace("\"", "\\\"")
 
-val releaseVersionName = System.getenv("MASHWARAK_VERSION_NAME")?.trim().orEmpty().ifBlank { "1.12.1" }
-val releaseVersionCode = System.getenv("MASHWARAK_VERSION_CODE")?.trim()?.toIntOrNull() ?: 26
+val releaseVersionName = System.getenv("MASHWARAK_VERSION_NAME")?.trim().orEmpty().ifBlank { "1.13.0" }
+val releaseVersionCode = System.getenv("MASHWARAK_VERSION_CODE")?.trim()?.toIntOrNull() ?: 27
 
 android {
     signingConfigs {
@@ -44,6 +44,11 @@ android {
         buildConfigField("String", "FCM_API_KEY", "\"${cfg("FCM_API_KEY")}\"")
         buildConfigField("String", "FCM_APP_ID", "\"${cfg("FCM_APP_ID")}\"")
         buildConfigField("String", "FCM_SENDER_ID", "\"${cfg("FCM_SENDER_ID")}\"")
+
+        val mapsApiKey = System.getenv("MASHWARAK_MAPS_API_KEY")?.trim().orEmpty().ifBlank {
+            (cfg.getProperty("GOOGLE_MAPS_API_KEY") ?: cfg.getProperty("FCM_API_KEY") ?: "").trim()
+        }
+        manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
     }
 
     buildFeatures { buildConfig = true }
@@ -74,4 +79,5 @@ dependencies {
     implementation("com.google.firebase:firebase-messaging:24.1.0")
     implementation("com.google.firebase:firebase-common:21.0.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("com.google.android.gms:play-services-maps:20.0.0")
 }
