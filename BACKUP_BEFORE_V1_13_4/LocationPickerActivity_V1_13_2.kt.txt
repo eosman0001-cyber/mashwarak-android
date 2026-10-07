@@ -60,7 +60,6 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
     private var movingToLocation = false
     private var mapTilesLoaded = false
     private var locationRequestRunning = false
-    private var allowCameraIdleSelection = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor()
 
@@ -224,80 +223,48 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
 
     override fun onMapReady(googleMap: GoogleMap) {
         map = googleMap
-        googleMap.mapType = GoogleMap.MAP_TYPE_NORMAL
         googleMap.uiSettings.apply {
             isMapToolbarEnabled = false
             isCompassEnabled = true
             isZoomControlsEnabled = false
             isMyLocationButtonEnabled = false
-            isScrollGesturesEnabled = true
-            isZoomGesturesEnabled = true
         }
-        // Keep Google attribution / controls clear of our top and bottom cards.
-        googleMap.setPadding(0, dp(132), 0, dp(238))
         enableMyLocationLayerIfAllowed()
 
-        // V1.13.4: map rendering is completely independent from GPS lookup.
-        // Give Google Maps an immediate valid camera target so tiles start loading at once.
+        // The map must render independently from GPS lookup.
         val initial = if (initialLat != null && initialLng != null) LatLng(initialLat!!, initialLng!!) else null
-        val firstTarget = initial ?: LatLng(30.55, 30.90)
-        val firstZoom = if (initial != null) 17f else 10.5f
-        if (initial != null) selectedPoint = initial
-
-        centerPin.visibility = View.VISIBLE
-        googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(firstTarget, firstZoom))
-        mapView.post {
-            mapView.visibility = View.VISIBLE
-            mapView.requestLayout()
-            mapView.invalidate()
-            googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(firstTarget, firstZoom))
-        }
-        // Some devices/WebView transitions do not paint the first frame until a later invalidate.
-        // Force a harmless repaint without waiting for GPS or user interaction.
-        mainHandler.postDelayed({
-            if (!isFinishing) {
-                mapView.invalidate()
-                val camera = googleMap.cameraPosition
-                googleMap.moveCamera(CameraUpdateFactory.newCameraPosition(camera))
-            }
-        }, 300L)
-        mainHandler.postDelayed({ allowCameraIdleSelection = true }, 700L)
-
         if (initial != null) {
-            setStatus("جاري قراءة المكان...", false)
-            reverseGeocode(initial)
-        } else if (mode == "FROM") {
-            setStatus("جاري تحديد موقعك الحالي...", false)
-            // Start GPS immediately; never make tile loading wait for location lookup.
-            mainHandler.postDelayed({ if (!isFinishing) ensureLocationPermissionAndMove() }, 120L)
+            selectedPoint = initial
+            googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(initial, 17f))
         } else {
-            setStatus("ابحث عن الوجهة أو حرّك الخريطة لتحديدها.", false)
+            googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(30.56, 30.98), 10f))
         }
 
+        setStatus("جاري تحميل الخريطة...", false)
         googleMap.setOnMapLoadedCallback {
             mapTilesLoaded = true
-            mapView.invalidate()
-            if (mode == "TO" && !locationRequestRunning && selectedPoint == null) {
+            centerPin.visibility = View.VISIBLE
+            if (initial != null) {
+                reverseGeocode(initial)
+            } else if (mode == "FROM") {
+                ensureLocationPermissionAndMove()
+            } else {
                 setStatus("ابحث عن الوجهة أو حرّك الخريطة لتحديدها.", false)
             }
         }
 
-        // Only report a Maps rendering problem after a generous window. GPS remains independent.
         mainHandler.postDelayed({
             if (!mapTilesLoaded && !isFinishing) {
-                setStatus("الخريطة لم تكتمل بعد. تأكد من الإنترنت، ويمكنك استخدام البحث أو موقعي الحالي.", true)
-                mapView.invalidate()
+                centerPin.visibility = View.INVISIBLE
+                setStatus("تعذر تحميل خريطة Google. راجع اتصال الإنترنت أو إعداد Maps SDK.", true)
             }
-        }, 12_000L)
+        }, 8_000L)
 
-        googleMap.setOnCameraMoveStartedListener { reason ->
-            if (reason == GoogleMap.OnCameraMoveStartedListener.REASON_GESTURE) {
-                allowCameraIdleSelection = true
-            }
-            if (!movingToLocation) setStatus("", false)
+        googleMap.setOnCameraMoveStartedListener {
+            if (!movingToLocation && mapTilesLoaded) setStatus("", false)
         }
         googleMap.setOnCameraIdleListener {
-            if (!allowCameraIdleSelection && selectedPoint == null) return@setOnCameraIdleListener
+            if (!mapTilesLoaded) return@setOnCameraIdleListener
             val target = googleMap.cameraPosition.target
             selectedPoint = target
             reverseGeocode(target)
