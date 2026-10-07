@@ -1,0 +1,98 @@
+name: Publish Mashwarak APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, example v1.13.0"
+        required: true
+        default: "v1.13.0"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve app version from release tag
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          VERSION="${INPUT_TAG#v}"
+          VERSION="${VERSION#V}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release tag: $INPUT_TAG. Use vMAJOR.MINOR.PATCH, for example v1.13.0"
+            exit 1
+          fi
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          VERSION_CODE=$((10#$MAJOR * 1000000 + 10#$MINOR * 1000 + 10#$PATCH))
+          echo "MASHWARAK_VERSION_NAME=$VERSION" >> "$GITHUB_ENV"
+          echo "MASHWARAK_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "Resolved $INPUT_TAG -> versionName=$VERSION versionCode=$VERSION_CODE"
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Restore release keystore
+        shell: bash
+        run: |
+          printf '%s' "${{ secrets.MASHWARAK_KEYSTORE_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/mashwarak-release-key.jks"
+          echo "b909765d511efd2d01b73376f279863f3ed42ec0a3bbed127867773410e9a581  $RUNNER_TEMP/mashwarak-release-key.jks" | sha256sum -c -
+
+      - name: Build signed release APK
+        env:
+          MASHWARAK_KEYSTORE_PATH: ${{ runner.temp }}/mashwarak-release-key.jks
+          MASHWARAK_KEYSTORE_PASSWORD: ${{ secrets.MASHWARAK_KEYSTORE_PASSWORD }}
+          MASHWARAK_KEY_ALIAS: ${{ secrets.MASHWARAK_KEY_ALIAS }}
+          MASHWARAK_KEY_PASSWORD: ${{ secrets.MASHWARAK_KEY_PASSWORD }}
+          MASHWARAK_VERSION_NAME: ${{ env.MASHWARAK_VERSION_NAME }}
+          MASHWARAK_VERSION_CODE: ${{ env.MASHWARAK_VERSION_CODE }}
+          MASHWARAK_MAPS_API_KEY: ${{ secrets.MASHWARAK_MAPS_API_KEY }}
+        run: gradle :app:assembleRelease
+
+      - name: Verify APK signature and embedded version
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          BUILD_TOOLS="$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          APKSIGNER="$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner"
+          AAPT="$ANDROID_HOME/build-tools/$BUILD_TOOLS/aapt"
+          "$APKSIGNER" verify --verbose "$APK"
+          BADGING="$($AAPT dump badging "$APK" | head -1)"
+          echo "$BADGING"
+          echo "$BADGING" | grep -q "versionName='${MASHWARAK_VERSION_NAME}'"
+          echo "$BADGING" | grep -q "versionCode='${MASHWARAK_VERSION_CODE}'"
+
+      - name: Prepare stable APK name
+        run: cp app/build/outputs/apk/release/app-release.apk Mashwarak.apk
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" Mashwarak.apk --clobber
+          else
+            gh release create "$TAG" Mashwarak.apk \
+              --title "Mashwarak $TAG" \
+              --notes "Signed Mashwarak Android release. App version is synchronized automatically with the release tag."
+          fi

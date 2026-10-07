@@ -12,8 +12,8 @@ if (cfgFile.exists()) cfgFile.inputStream().use { cfg.load(it) }
 fun cfg(name: String, fallback: String = "") =
     (cfg.getProperty(name) ?: fallback).replace("\\", "\\\\").replace("\"", "\\\"")
 
-val releaseVersionName = System.getenv("MASHWARAK_VERSION_NAME")?.trim().orEmpty().ifBlank { "1.13.2" }
-val releaseVersionCode = System.getenv("MASHWARAK_VERSION_CODE")?.trim()?.toIntOrNull() ?: 29
+val releaseVersionName = System.getenv("MASHWARAK_VERSION_NAME")?.trim().orEmpty().ifBlank { "1.13.0" }
+val releaseVersionCode = System.getenv("MASHWARAK_VERSION_CODE")?.trim()?.toIntOrNull() ?: 27
 
 android {
     signingConfigs {
@@ -45,12 +45,10 @@ android {
         buildConfigField("String", "FCM_APP_ID", "\"${cfg("FCM_APP_ID")}\"")
         buildConfigField("String", "FCM_SENDER_ID", "\"${cfg("FCM_SENDER_ID")}\"")
 
-        // Use only a Maps-enabled key. Falling back to the Firebase Web API key can
-        // build successfully but still render a blank Google map at runtime.
         val mapsApiKey = System.getenv("MASHWARAK_MAPS_API_KEY")?.trim().orEmpty().ifBlank {
-            (cfg.getProperty("GOOGLE_MAPS_API_KEY") ?: "").trim()
+            (cfg.getProperty("GOOGLE_MAPS_API_KEY") ?: cfg.getProperty("FCM_API_KEY") ?: "").trim()
         }
-        manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey.ifBlank { "MISSING_MAPS_API_KEY" }
+        manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
     }
 
     buildFeatures { buildConfig = true }

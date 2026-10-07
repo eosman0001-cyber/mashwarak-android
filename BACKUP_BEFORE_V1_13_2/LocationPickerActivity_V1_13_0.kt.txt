@@ -10,11 +10,6 @@ import android.graphics.drawable.GradientDrawable
 import android.location.Address
 import android.location.Geocoder
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.os.SystemClock
-import android.location.Location
-import android.location.LocationManager
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -48,7 +43,6 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
     private lateinit var addressText: TextView
     private lateinit var statusText: TextView
     private lateinit var confirmButton: TextView
-    private lateinit var centerPin: TextView
 
     private var map: GoogleMap? = null
     private var mode: String = "TO"
@@ -58,9 +52,6 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
     private var selectedPoint: LatLng? = null
     private var selectedAddress: Address? = null
     private var movingToLocation = false
-    private var mapTilesLoaded = false
-    private var locationRequestRunning = false
-    private val mainHandler = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor()
 
     private val permissionLauncher = registerForActivityResult(
@@ -158,16 +149,15 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
             }
         )
 
-        centerPin = TextView(this).apply {
+        val pin = TextView(this).apply {
             text = "📍"
             textSize = 44f
             gravity = Gravity.CENTER
             translationY = -dp(24).toFloat()
             elevation = dp(12).toFloat()
-            visibility = View.INVISIBLE
         }
         root.addView(
-            centerPin,
+            pin,
             FrameLayout.LayoutParams(dp(68), dp(68)).apply { gravity = Gravity.CENTER }
         )
 
@@ -231,43 +221,27 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
         }
         enableMyLocationLayerIfAllowed()
 
-        // The map must render independently from GPS lookup.
-        val initial = if (initialLat != null && initialLng != null) LatLng(initialLat!!, initialLng!!) else null
-        if (initial != null) {
-            selectedPoint = initial
-            googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(initial, 17f))
-        } else {
-            googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(30.56, 30.98), 10f))
-        }
-
-        setStatus("جاري تحميل الخريطة...", false)
-        googleMap.setOnMapLoadedCallback {
-            mapTilesLoaded = true
-            centerPin.visibility = View.VISIBLE
-            if (initial != null) {
-                reverseGeocode(initial)
-            } else if (mode == "FROM") {
-                ensureLocationPermissionAndMove()
-            } else {
-                setStatus("ابحث عن الوجهة أو حرّك الخريطة لتحديدها.", false)
-            }
-        }
-
-        mainHandler.postDelayed({
-            if (!mapTilesLoaded && !isFinishing) {
-                centerPin.visibility = View.INVISIBLE
-                setStatus("تعذر تحميل خريطة Google. راجع اتصال الإنترنت أو إعداد Maps SDK.", true)
-            }
-        }, 8_000L)
-
         googleMap.setOnCameraMoveStartedListener {
-            if (!movingToLocation && mapTilesLoaded) setStatus("", false)
+            if (!movingToLocation) setStatus("", false)
         }
         googleMap.setOnCameraIdleListener {
-            if (!mapTilesLoaded) return@setOnCameraIdleListener
             val target = googleMap.cameraPosition.target
             selectedPoint = target
             reverseGeocode(target)
+        }
+
+        val initial = if (initialLat != null && initialLng != null) LatLng(initialLat!!, initialLng!!) else null
+        if (initial != null) {
+            selectedPoint = initial
+            movingToLocation = true
+            googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(initial, 17f))
+            movingToLocation = false
+            reverseGeocode(initial)
+        } else {
+            googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(30.56, 30.98), 9f))
+            // For FROM, current location is the primary flow. For TO, centering on
+            // the user's area also makes searching/panning feel natural.
+            ensureLocationPermissionAndMove()
         }
     }
 
@@ -289,71 +263,23 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
 
     @SuppressLint("MissingPermission")
     private fun moveToCurrentLocation() {
-        if (locationRequestRunning) return
         enableMyLocationLayerIfAllowed()
-        locationRequestRunning = true
         setStatus("جاري تحديد موقعك الحالي...", false)
-
         val fused = LocationServices.getFusedLocationProviderClient(this)
-        val cancellation = CancellationTokenSource()
-        var finished = false
-        var cached: Location? = null
-
-        fun finish(location: Location?, fresh: Boolean) {
-            if (finished) return
-            finished = true
-            locationRequestRunning = false
-            cancellation.cancel()
-            mainHandler.removeCallbacksAndMessages(LOCATION_TIMEOUT_TOKEN)
-            if (location != null) {
-                moveCameraTo(LatLng(location.latitude, location.longitude), if (fresh) 18f else 17f)
-                if (!fresh) setStatus("تم استخدام آخر موقع متاح، وجاري قراءة المكان...", false)
+        fused.lastLocation.addOnSuccessListener { last ->
+            if (last != null && System.currentTimeMillis() - last.time < 120_000L && last.accuracy <= 150f) {
+                moveCameraTo(LatLng(last.latitude, last.longitude), 18f)
             } else {
-                val fallback = bestLastKnownLocation()
-                if (fallback != null) moveCameraTo(LatLng(fallback.latitude, fallback.longitude), 17f)
-                else setStatus("تعذر تحديد الموقع. تأكد من تشغيل GPS ثم حاول مرة أخرى.", true)
-            }
-        }
-
-        fused.lastLocation
-            .addOnSuccessListener { last ->
-                cached = last
-                if (last != null) {
-                    val age = System.currentTimeMillis() - last.time
-                    if (age in 0..600_000L && last.accuracy <= 250f) {
-                        moveCameraTo(LatLng(last.latitude, last.longitude), 17f)
-                        setStatus("تم تحديد موقع مبدئي، جاري تحسين الدقة...", false)
+                val token = CancellationTokenSource()
+                fused.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, token.token)
+                    .addOnSuccessListener { fresh ->
+                        if (fresh != null) moveCameraTo(LatLng(fresh.latitude, fresh.longitude), 18f)
+                        else if (last != null) moveCameraTo(LatLng(last.latitude, last.longitude), 17f)
+                        else setStatus("تعذر تحديد الموقع الحالي. تأكد من تشغيل GPS.", true)
                     }
-                    if (age in 0..120_000L && last.accuracy <= 80f) {
-                        finish(last, true)
-                        return@addOnSuccessListener
-                    }
-                }
-
-                val timeout = Runnable { finish(cached ?: bestLastKnownLocation(), false) }
-                mainHandler.postAtTime(timeout, LOCATION_TIMEOUT_TOKEN, SystemClock.uptimeMillis() + 7_000L)
-
-                fused.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cancellation.token)
-                    .addOnSuccessListener { fresh -> finish(fresh ?: cached, fresh != null) }
-                    .addOnFailureListener { finish(cached ?: bestLastKnownLocation(), false) }
+                    .addOnFailureListener { setStatus("تعذر تحديد الموقع الحالي. حاول مرة أخرى.", true) }
             }
-            .addOnFailureListener {
-                finish(bestLastKnownLocation(), false)
-            }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun bestLastKnownLocation(): Location? {
-        val manager = getSystemService(LOCATION_SERVICE) as LocationManager
-        val providers = listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
-        var best: Location? = null
-        for (provider in providers) {
-            val enabled = try { manager.isProviderEnabled(provider) } catch (_: Exception) { false }
-            if (!enabled) continue
-            val loc = try { manager.getLastKnownLocation(provider) } catch (_: Exception) { null }
-            if (loc != null && (best == null || loc.time > (best?.time ?: 0L))) best = loc
-        }
-        return best
+        }.addOnFailureListener { setStatus("تعذر تحديد الموقع الحالي. حاول مرة أخرى.", true) }
     }
 
     private fun moveCameraTo(point: LatLng, zoom: Float) {
@@ -477,11 +403,10 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
     override fun onStop() { mapView.onStop(); super.onStop() }
     override fun onPause() { mapView.onPause(); super.onPause() }
     override fun onLowMemory() { super.onLowMemory(); mapView.onLowMemory() }
-    override fun onDestroy() { mainHandler.removeCallbacksAndMessages(null); executor.shutdownNow(); mapView.onDestroy(); super.onDestroy() }
+    override fun onDestroy() { executor.shutdownNow(); mapView.onDestroy(); super.onDestroy() }
     override fun onSaveInstanceState(outState: Bundle) { super.onSaveInstanceState(outState); mapView.onSaveInstanceState(outState) }
 
     companion object {
-        private val LOCATION_TIMEOUT_TOKEN = Any()
         const val EXTRA_MODE = "mode"
         const val EXTRA_LAT = "lat"
         const val EXTRA_LNG = "lng"
