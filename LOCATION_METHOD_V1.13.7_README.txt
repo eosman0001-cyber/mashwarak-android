@@ -1,0 +1,6 @@
+MASHWARAK Android V1.13.7 | 2026-10-09
+Based on the official V1.13.6 GitHub-ready source.
+Change: LocationPickerActivity no longer asks for GPS when opening FROM map.
+GPS permissions remain requested only from the picker current-location button.
+Unchanged: native map UI, map search, saved point return, WebView, signing & CI workflows.
+Android source package only. Build & test an APK via existing GitHub workflow before distribution.

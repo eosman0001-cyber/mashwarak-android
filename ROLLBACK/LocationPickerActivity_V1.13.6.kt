@@ -318,11 +318,12 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
         if (initial != null) {
             setStatus("جاري قراءة المكان...", false)
             reverseGeocode(initial)
+        } else if (mode == "FROM") {
+            setStatus("جاري تحديد موقعك الحالي...", false)
+            // Start GPS immediately; never make tile loading wait for location lookup.
+            mainHandler.postDelayed({ if (!isFinishing) ensureLocationPermissionAndMove() }, 120L)
         } else {
-            // V1.13.7: Opening either map never requests GPS automatically.
-            // Only the visible "موقعي الحالي" button calls ensureLocationPermissionAndMove().
-            // This prevents confusing permission prompts for customers choosing a point manually.
-            setStatus("ابحث عن المكان أو حرّك الخريطة لتحديده. زر موقعي الحالي اختياري.", false)
+            setStatus("ابحث عن الوجهة أو حرّك الخريطة لتحديدها.", false)
         }
 
         googleMap.setOnMapLoadedCallback {
