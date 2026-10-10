@@ -1,0 +1,13 @@
+MASHWARAK Android V1.13.8 - External WhatsApp Link Guard
+
+Changes:
+- Intercept whatsapp:, tel:, mailto:, and known WhatsApp HTTP(S) links and send them to external apps; do not navigate inside WebView.
+- Fix the stale native Help > Contact phone number to 01098973360.
+- Keep back gesture, login, signing workflow, maps and permissions unchanged.
+- Default Android version changed to 1.13.8/code 1013008; GitHub environment version inputs override these defaults.
+
+IMPORTANT:
+- First deploy Customer Index V2.6.24; it uses whatsapp:// inside existing APK versions and needs no APK rebuild.
+- Rebuild/install this Android source only if you want native defense for links from other screens.
+- This ZIP contains Android SOURCE, not a compiled APK.
+- Verify on a real Android device with WhatsApp installed and with it absent.

@@ -1,0 +1,1 @@
+Android V1.13.9 SOURCE ONLY (not APK). Removed duplicate native Help > Contact Us. Customer sidebar WhatsApp remains in Web Index. The previously existing contact handler is left unchanged. Build APK through existing approved workflow; no signing or GitHub workflows modified. Roll back to V1.13.8 zip.

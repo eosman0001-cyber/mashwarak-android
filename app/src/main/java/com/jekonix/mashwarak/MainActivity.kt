@@ -333,17 +333,26 @@ class MainActivity : AppCompatActivity() {
                 val uri = request?.url ?: return false
                 val scheme = uri.scheme.orEmpty()
 
-                if (
-                    scheme == "tel" ||
+                // External contact links must never replace the Apps Script page.
+                // Navigating to WhatsApp inside WebView can show "Page Not Found";
+                // going Back may then show a blank embedded Sites frame.
+                val host = uri.host.orEmpty().lowercase(java.util.Locale.ROOT)
+                val externalContactLink = scheme == "tel" ||
                     scheme == "mailto" ||
-                    scheme == "whatsapp"
-                ) {
+                    scheme == "whatsapp" ||
+                    ((scheme == "https" || scheme == "http") &&
+                        (host == "wa.me" || host == "api.whatsapp.com" ||
+                         host == "web.whatsapp.com" || host == "www.whatsapp.com"))
+                if (externalContactLink) {
                     try {
-                        startActivity(Intent(Intent.ACTION_VIEW, uri))
+                        val external = Intent(Intent.ACTION_VIEW, uri).apply {
+                            addCategory(Intent.CATEGORY_BROWSABLE)
+                        }
+                        startActivity(external)
                     } catch (_: Exception) {
                         Toast.makeText(
                             this@MainActivity,
-                            "تعذر فتح الرابط",
+                            "تعذر فتح رابط التواصل. تأكد من تثبيت واتساب.",
                             Toast.LENGTH_SHORT
                         ).show()
                     }
@@ -1152,15 +1161,8 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        sheet.addView(
-            makeHelpOption(
-                "تواصل معنا",
-                "اتصال أو واتساب مع مشوارك"
-            ) {
-                dialog.dismiss()
-                showContactOptions()
-            }
-        )
+        // V1.13.9: Contact remains in the customer sidebar; native Help only
+        // offers guidance and update checks. No duplicate contact action.
 
         val storedLatest = updatePrefs.getString(PREF_AVAILABLE_VERSION, "").orEmpty()
         val updateSubtitle = if (isVersionNewer(storedLatest, BuildConfig.VERSION_NAME)) {
@@ -1275,7 +1277,7 @@ class MainActivity : AppCompatActivity() {
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> {
-                        val uri = Uri.parse("https://wa.me/201098505030")
+                        val uri = Uri.parse("https://wa.me/201098973360")
                         try {
                             startActivity(Intent(Intent.ACTION_VIEW, uri))
                         } catch (_: Exception) {
@@ -1287,7 +1289,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                     1 -> {
-                        val uri = Uri.parse("tel:+201098505030")
+                        val uri = Uri.parse("tel:+201098973360")
                         try {
                             startActivity(Intent(Intent.ACTION_DIAL, uri))
                         } catch (_: Exception) {
