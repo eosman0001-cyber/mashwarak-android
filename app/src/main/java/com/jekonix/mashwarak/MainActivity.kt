@@ -70,16 +70,7 @@ class MainActivity : AppCompatActivity() {
     private var requestedCameraFacing: String = "rear"
     private var pendingDownloadName: String? = null
     private var pendingDownloadDataUrl: String? = null
-    // Startup gate: keep the native branded screen visible until the embedded app
-    // has reached a rendered state. Google Sites onPageFinished is NOT enough.
-    private var startupGeneration = 0
-    private var startupMainPageFinished = false
-    private var startupProbeInFlight = false
-    private var startupVisualPending = false
-    private var startupStatusView: TextView? = null
-    private var startupRetryView: TextView? = null
-    private var startupContinueView: TextView? = null
-    private var startupFailed = false
+    private var pageShown = false
     private var openNotificationsAfterLoad = false
     private var nativeBackRequestInFlight = false
 
@@ -195,6 +186,18 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // First ordinary app opening only. Never interrupt shared locations,
+        // notification intents, or an Activity recreated by Android.
+        val normalLauncherOpen = intent?.action == Intent.ACTION_MAIN &&
+            intent?.hasCategory(Intent.CATEGORY_LAUNCHER) == true
+        val introDone = getSharedPreferences(OnboardingActivity.PREFS, Context.MODE_PRIVATE)
+            .getBoolean(OnboardingActivity.KEY_COMPLETED, false)
+        if (savedInstanceState == null && normalLauncherOpen && !introDone) {
+            startActivity(Intent(this, OnboardingActivity::class.java))
+            finish()
+            return
+        }
 
         openNotificationsAfterLoad =
             intent?.getBooleanExtra("OPEN_NOTIFICATIONS", false) == true
@@ -335,28 +338,6 @@ class MainActivity : AppCompatActivity() {
         )
 
         webView.webViewClient = object : WebViewClient() {
-            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                if (::splash.isInitialized && splash.visibility == View.VISIBLE) {
-                    startupMainPageFinished = false
-                    // Redirects replace the JavaScript document. Never let an
-                    // abandoned probe for the old document block the new one.
-                    startupProbeInFlight = false
-                    startupVisualPending = false
-                }
-            }
-
-            override fun onPageCommitVisible(view: WebView?, url: String?) {
-                if (::splash.isInitialized && splash.visibility == View.VISIBLE) {
-                    checkStartupReadiness(startupGeneration)
-                }
-            }
-
-            override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
-                if (request?.isForMainFrame == true && ::splash.isInitialized && splash.visibility == View.VISIBLE) {
-                    showStartupFailure("تعذر فتح مشوارك. تأكد من الاتصال بالإنترنت وحاول مرة أخرى.")
-                }
-            }
-
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: WebResourceRequest?
@@ -395,13 +376,20 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 progress.visibility = View.GONE
+
                 updateHelpButtonPositionFromPage()
-                // This callback is for the outer Google Sites page. Its Apps Script
-                // iframe can still be blank: wait for the embedded frame instead.
-                if (::splash.isInitialized && splash.visibility == View.VISIBLE) {
-                    startupMainPageFinished = true
-                    checkStartupReadiness(startupGeneration)
+
+                // Small delay prevents the raw Google Sites frame from
+                // flashing before the page is visually ready.
+                if (!pageShown) {
+                    pageShown = true
+                    splash.postDelayed({
+                        hideSplash()
+                        openNotificationsIfRequested()
+                        dispatchPendingSharedDestination()
+                    }, 450)
                 } else {
+                    hideSplash()
                     openNotificationsIfRequested()
                     dispatchPendingSharedDestination()
                 }
@@ -1182,6 +1170,18 @@ class MainActivity : AppCompatActivity() {
             ) {
                 dialog.dismiss()
                 startWebUsageTour()
+            }
+        )
+
+        sheet.addView(
+            makeHelpOption(
+                "الشاشات التعريفية",
+                "شاهد صفحات التعريف الأربع مرة أخرى"
+            ) {
+                dialog.dismiss()
+                startActivity(Intent(this, OnboardingActivity::class.java).apply {
+                    putExtra(OnboardingActivity.EXTRA_REVIEW, true)
+                })
             }
         )
 
@@ -2003,57 +2003,6 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        // Only displayed if a request takes unusually long or fails. A user can
-        // retry without seeing an empty WebView, or explicitly view the page.
-        startupStatusView = loadingText
-        startupRetryView = TextView(this).apply {
-            text = "إعادة المحاولة"
-            textSize = 15f
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
-            setPadding(dp(22), dp(12), dp(22), dp(12))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(13).toFloat()
-                setColor(Color.rgb(116, 18, 50))
-            }
-            visibility = View.GONE
-            setOnClickListener {
-                webView.stopLoading()
-                showSplash()
-                webView.loadUrl(BuildConfig.APP_URL)
-            }
-        }
-        content.addView(
-            startupRetryView,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = dp(18)
-            }
-        )
-        startupContinueView = TextView(this).apply {
-            text = "عرض الصفحة الحالية"
-            textSize = 13f
-            gravity = Gravity.CENTER
-            setTextColor(Color.rgb(116, 18, 50))
-            setPadding(dp(18), dp(10), dp(18), dp(10))
-            visibility = View.GONE
-            setOnClickListener { completeStartup(startupGeneration) }
-        }
-        content.addView(
-            startupContinueView,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = dp(4)
-            }
-        )
-
         overlay.addView(
             content,
             FrameLayout.LayoutParams(
@@ -2068,87 +2017,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showSplash() {
-        // Bump the generation so callbacks from earlier navigations/reloads
-        // can never dismiss this new screen.
-        startupGeneration++
-        val generation = startupGeneration
-        startupMainPageFinished = false
-        startupProbeInFlight = false
-        startupVisualPending = false
-        startupFailed = false
-        startupStatusView?.text = "جاري فتح مشوارك..."
-        startupRetryView?.visibility = View.GONE
-        startupContinueView?.visibility = View.GONE
-        splash.animate().cancel()
         splash.alpha = 1f
         splash.visibility = View.VISIBLE
         splash.bringToFront()
-        splash.postDelayed({
-            if (generation == startupGeneration && splash.visibility == View.VISIBLE && !startupFailed) {
-                startupStatusView?.text = "الفتح بياخد وقت أطول من المعتاد. تقدر تعيد المحاولة."
-                startupRetryView?.visibility = View.VISIBLE
-                startupContinueView?.visibility = View.VISIBLE
-            }
-        }, 18000L)
-    }
-
-    private fun showStartupFailure(message: String) {
-        startupFailed = true
-        startupStatusView?.text = message
-        startupRetryView?.visibility = View.VISIBLE
-        startupContinueView?.visibility = View.VISIBLE
-    }
-
-    // Poll the outer document for the *embedded* app's iframe load. We cannot
-    // read a cross-origin Apps Script iframe DOM; a frame load event is the
-    // strongest signal available without changing the customer web project.
-    // If this signal is unavailable, the 18-second fallback allows manual view.
-    private fun checkStartupReadiness(generation: Int) {
-        if (generation != startupGeneration || startupFailed ||
-            splash.visibility != View.VISIBLE || startupProbeInFlight || startupVisualPending
-        ) return
-        if (!::webView.isInitialized) return
-        startupProbeInFlight = true
-        webView.evaluateJavascript(STARTUP_READY_CHECK_JS) { result ->
-            startupProbeInFlight = false
-            if (generation != startupGeneration || startupFailed || splash.visibility != View.VISIBLE) {
-                return@evaluateJavascript
-            }
-            val ready = result == "\"ready\""
-            if (ready && startupMainPageFinished) {
-                startupVisualPending = true
-                webView.postVisualStateCallback(generation.toLong(), object : WebView.VisualStateCallback() {
-                    override fun onComplete(requestId: Long) {
-                        if (generation != startupGeneration || splash.visibility != View.VISIBLE) return
-                        splash.postDelayed({ completeStartup(generation) }, 350L)
-                    }
-                })
-            } else {
-                webView.postDelayed({ checkStartupReadiness(generation) }, 450L)
-            }
-        }
-    }
-
-    private fun completeStartup(generation: Int) {
-        if (generation != startupGeneration || splash.visibility != View.VISIBLE) return
-        hideSplash()
-        openNotificationsIfRequested()
-        dispatchPendingSharedDestination()
     }
 
     private fun hideSplash() {
         if (splash.visibility != View.VISIBLE) return
-        splash.animate().cancel()
         splash.animate()
             .alpha(0f)
-            .setDuration(240)
+            .setDuration(260)
             .withEndAction {
                 splash.visibility = View.GONE
                 splash.alpha = 1f
             }
             .start()
     }
-
 
     inner class MashwarakCameraBridge {
         @JavascriptInterface
@@ -2324,73 +2208,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        // Detect completion of the significant embedded iframe, not the
-        // top-level Google Sites wrapper's onPageFinished event.
-        val STARTUP_READY_CHECK_JS = """
-            (function() {
-              try {
-                var state = window.__mwStartupFrameWait;
-                if (!state) {
-                  state = window.__mwStartupFrameWait = {};
-                  state.scan = function() {
-                    var frames = document.querySelectorAll('iframe');
-                    for (var i = 0; i < frames.length; i++) {
-                      var frame = frames[i];
-                      if (frame.__mwFrameWatched) continue;
-                      frame.__mwFrameWatched = true;
-                      frame.__mwFrameLoaded = false;
-                      frame.addEventListener('load', function() { this.__mwFrameLoaded = true; });
-                      try {
-                        var d = frame.contentDocument;
-                        if (d && d.readyState === 'complete' && d.body &&
-                            (d.body.innerText || '').trim().length > 30) {
-                          frame.__mwFrameLoaded = true;
-                        }
-                      } catch (err) { /* cross-origin is expected */ }
-                      // If the frame finished before our listener was attached,
-                      // resource timing may still show its completed navigation.
-                      // Do not rely on this signal alone on the first probe.
-                      try {
-                        var hits = performance.getEntriesByType('resource');
-                        var src = (frame.src || '').split('#')[0];
-                        for (var h = 0; h < hits.length; h++) {
-                          if (src && hits[h].name.split('#')[0] === src &&
-                              hits[h].initiatorType === 'iframe' && hits[h].responseEnd > 0) {
-                            frame.__mwFrameLoaded = true;
-                            break;
-                          }
-                        }
-                      } catch (err) { /* resource timing may be restricted */ }
-                    }
-                  };
-                  state.scan();
-                  if (document.documentElement) {
-                    new MutationObserver(state.scan).observe(
-                      document.documentElement, {childList: true, subtree: true}
-                    );
-                  }
-                }
-                state.scan();
-                var all = document.querySelectorAll('iframe');
-                var visible = [];
-                for (var j = 0; j < all.length; j++) {
-                  var frame = all[j], rect = frame.getBoundingClientRect();
-                  if (rect.width >= 140 && rect.height >= 140) visible.push(frame);
-                }
-                if (visible.length) {
-                  for (var k = 0; k < visible.length; k++) {
-                    if (visible[k].__mwFrameLoaded) return 'ready';
-                  }
-                  return 'wait-frame';
-                }
-                // Direct pages without embedded apps still work.
-                var body = document.body;
-                return (document.readyState === 'complete' && body &&
-                    (body.innerText || '').trim().length > 120)
-                    ? 'ready' : 'wait-content';
-              } catch (err) { return 'wait-script'; }
-            })();
-        """.trimIndent()
         private const val UPDATE_API_URL =
             "https://api.github.com/repos/eosman0001-cyber/mashwarak-android/releases/latest"
         private const val UPDATE_CHECK_INTERVAL_MS = 24L * 60L * 60L * 1000L
