@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.IntentFilter
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.os.SystemClock
 import android.content.ContentValues
 import android.media.MediaScannerConnection
 import android.location.Location
@@ -59,6 +60,20 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
 
 class MainActivity : AppCompatActivity() {
+
+    // V174: command-only launcher. NEVER return ID token, OTP or passwords to WebView.
+    private var lastCaptainLaunchElapsed = 0L
+    inner class MashwarakCaptainLauncher {
+        @JavascriptInterface
+        fun open() {
+            runOnUiThread {
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastCaptainLaunchElapsed < 3000L) return@runOnUiThread
+                lastCaptainLaunchElapsed = now
+                startActivity(Intent(this@MainActivity, CaptainActivationActivity::class.java))
+            }
+        }
+    }
 
     private lateinit var webView: WebView
     private lateinit var progress: ProgressBar
@@ -336,6 +351,10 @@ class MainActivity : AppCompatActivity() {
             MashwarakLocationBridge(),
             "MashwarakLocation"
         )
+
+        // Non-sensitive button launcher only. Credentials and Firebase token
+        // stay in CaptainActivationActivity, never passed through this interface.
+        webView.addJavascriptInterface(MashwarakCaptainLauncher(), "MashwarakCaptain")
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(
