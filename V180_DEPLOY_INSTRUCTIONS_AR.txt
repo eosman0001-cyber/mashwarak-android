@@ -1,0 +1,16 @@
+MASHWARAK V180 — توضيح الملفات المطلوبة
+
+ارفع إلى GitHub: محتويات هذا ZIP بالكامل إلى جذر المستودع، مع الحفاظ على المسارات.
+Android المتغير: app/src/main/java/com/jekonix/mashwarak/MainActivity.kt و CaptainActivationActivity.kt.
+
+هام: ملفات WEB_UPDATE/Code.gs.txt و WEB_UPDATE/Index.html.txt هي للنشر اليدوي في Apps Script وليست جزءًا من بناء APK.
+في Apps Script احفظ نسخة احتياطية ثم استبدل Code.gs و Index.html بمحتوى الملفين الجديدين، واعمل Deploy New version على نفس الرابط.
+لا تنشر APK قبل نشر Apps Script الجديد؛ لأن واجهة V180 تستدعي captainPortalCheckPhoneV180.
+
+ملحوظة أمان: فحص وجود رقم قبل OTP يحسن الواجهة لكنه قد يسمح باستنتاج تسجيل رقم؛ فُرض حد 8 استعلامات لكل رقم خلال 15 دقيقة، وهو ليس بديلًا عن CAPTCHA أو rate limiting أشمل على البنية الخلفية.
+
+SMS الحقيقي: onCodeSent لا يضمن وصول الرسالة. افحص سجلات Firebase والقيود والحصص ومشغل المحمول؛ لا تعطل OTP أو تتجاوزه.
+
+اختبارات إلزامية: رقم غير موجود؛ كابتن غير مفعل؛ كابتن مفعل؛ نسيان كلمة السر؛ رقم تجريبي؛ رقم حقيقي؛ تنقل WebView؛ عدم كشف ID token؛ بناء Release؛ خريطة؛ الحجز؛ الإشعارات.
+
+محدودية التحقق: فحص تغييرات المصدر فقط، وليس بناء APK أو تجربة موبايل.

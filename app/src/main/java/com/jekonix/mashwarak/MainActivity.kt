@@ -65,6 +65,16 @@ class MainActivity : AppCompatActivity() {
     private var lastCaptainLaunchElapsed = 0L
     inner class MashwarakCaptainLauncher {
         @JavascriptInterface
+        fun openWithPhone(localPhone: String) {
+            if (!Regex("^01[0125][0-9]{8}$").matches(localPhone)) return
+            runOnUiThread {
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastCaptainLaunchElapsed < 3000L) return@runOnUiThread
+                lastCaptainLaunchElapsed = now
+                startActivity(Intent(this@MainActivity, CaptainActivationActivity::class.java).putExtra("captain_phone", localPhone))
+            }
+        }
+        @JavascriptInterface
         fun open() {
             runOnUiThread {
                 val now = SystemClock.elapsedRealtime()

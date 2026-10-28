@@ -77,7 +77,7 @@ class CaptainActivationActivity : AppCompatActivity() {
         }
 
         label("تأكيد رقم الكابتن وإنشاء كلمة السر")
-        label("بنستخدم Firebase للتحقق أول مرة فقط. بعد التفعيل تقدر تدخل من ملف الكابتن برقمك وكلمة السر.")
+        label("هنبعت لك كود تأكيد على رقم الموبايل المسجل، وبعدها تقدر تنشئ كلمة السر.")
         status = label("ابدأ بكتابة الرقم اللي سجلت بيه في مشوارك.")
         // A distinct, read-only dialing code prevents accidental +20 / leading-zero duplication.
         val phoneRow = LinearLayout(this).apply {
@@ -104,13 +104,17 @@ class CaptainActivationActivity : AppCompatActivity() {
         phoneRow.addView(countryCode)
         phoneRow.addView(phone, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         content.addView(phoneRow)
+        intent.getStringExtra("captain_phone")?.takeIf { it.matches(Regex("^01[0125][0-9]{8}$")) }?.let {
+            phone.setText(it)
+            phone.isEnabled = false
+        }
         send = button("إرسال كود التحقق") { sendCode() }
         otp = entry("كود التحقق من 6 أرقام", InputType.TYPE_CLASS_NUMBER)
         verify = button("تأكيد كود التحقق") { confirmCode() }.apply { isEnabled = false }
         password = entry("كلمة سر جديدة (10 أحرف على الأقل)", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
         confirm = entry("تأكيد كلمة السر", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
         activate = button("تفعيل ملف الكابتن") { activateProfile() }.apply { isEnabled = false }
-        val testTip = label("يمكن اختبار رقم مصري وهمي مضاف في Firebase بدون SMS حقيقي. تفعيل ملف الكابتن يتطلب وجود سجل مطابق في Drivers.")
+        val testTip = label("لو الكود اتأخر، تأكد من استقبال رسائل SMS وجرّب لاحقًا من غير تكرار الطلب بسرعة.")
         testTip.textSize = 12f
         setPasswordVisibility(false)
     }
@@ -165,7 +169,7 @@ class CaptainActivationActivity : AppCompatActivity() {
                     verificationId = id
                     verify.isEnabled = true
                     send.isEnabled = true
-                    message("اكتب كود التحقق واضغط تأكيد.")
+                    message("تم طلب إرسال الكود. وصول الرسالة قد يستغرق قليلًا؛ لو ما وصلتش، لا تكرر الطلب بسرعة.")
                 }
             }
             val options = PhoneAuthOptions.newBuilder(auth)
