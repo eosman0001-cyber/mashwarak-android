@@ -65,7 +65,7 @@ class CaptainActivationActivity : AppCompatActivity() {
         val bg = Color.rgb(250, 247, 248)
         val muted = Color.rgb(125, 105, 115)
         val gold = Color.rgb(229, 177, 85)
-        val scroll = ScrollView(this).apply { fillViewport = true; setBackgroundColor(bg) }
+        val scroll = ScrollView(this).apply { setFillViewport(true); setBackgroundColor(bg) }
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(25), dp(20), dp(30)); gravity = Gravity.CENTER_HORIZONTAL }
         scroll.addView(root)
         setContentView(scroll)
