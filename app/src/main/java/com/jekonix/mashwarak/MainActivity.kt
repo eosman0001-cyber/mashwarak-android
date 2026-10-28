@@ -402,11 +402,16 @@ class MainActivity : AppCompatActivity() {
                 // flashing before the page is visually ready.
                 if (!pageShown) {
                     pageShown = true
+                    // V179: let the embedded website settle after the outer page
+                    // finishes. Keep the branded splash visible instead of exposing
+                    // a transient white WebView/Google Sites frame.
                     splash.postDelayed({
-                        hideSplash()
-                        openNotificationsIfRequested()
-                        dispatchPendingSharedDestination()
-                    }, 450)
+                        if (!isFinishing && !isDestroyed) {
+                            hideSplash()
+                            openNotificationsIfRequested()
+                            dispatchPendingSharedDestination()
+                        }
+                    }, 1800)
                 } else {
                     hideSplash()
                     openNotificationsIfRequested()

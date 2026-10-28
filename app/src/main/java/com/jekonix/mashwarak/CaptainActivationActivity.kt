@@ -35,6 +35,7 @@ class CaptainActivationActivity : AppCompatActivity() {
     private var verifiedPhone: String = ""
     private lateinit var status: TextView
     private lateinit var phone: EditText
+    private lateinit var countryCode: TextView
     private lateinit var otp: EditText
     private lateinit var password: EditText
     private lateinit var confirm: EditText
@@ -78,14 +79,38 @@ class CaptainActivationActivity : AppCompatActivity() {
         label("تأكيد رقم الكابتن وإنشاء كلمة السر")
         label("بنستخدم Firebase للتحقق أول مرة فقط. بعد التفعيل تقدر تدخل من ملف الكابتن برقمك وكلمة السر.")
         status = label("ابدأ بكتابة الرقم اللي سجلت بيه في مشوارك.")
-        phone = entry("01XXXXXXXXX", InputType.TYPE_CLASS_PHONE)
+        // A distinct, read-only dialing code prevents accidental +20 / leading-zero duplication.
+        val phoneRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+        countryCode = TextView(this).apply {
+            text = "+20"
+            textSize = 19f
+            setTextColor(burgundy)
+            setPadding(18, 18, 18, 18)
+            contentDescription = "مفتاح مصر +20"
+        }
+        phone = EditText(this).apply {
+            hint = "01XXXXXXXXX"
+            inputType = InputType.TYPE_CLASS_PHONE
+            textSize = 18f
+            isSingleLine = true
+            filters = arrayOf(android.text.InputFilter.LengthFilter(11))
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            textDirection = View.TEXT_DIRECTION_LTR
+        }
+        phoneRow.addView(countryCode)
+        phoneRow.addView(phone, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        content.addView(phoneRow)
         send = button("إرسال كود التحقق") { sendCode() }
         otp = entry("كود التحقق من 6 أرقام", InputType.TYPE_CLASS_NUMBER)
         verify = button("تأكيد كود التحقق") { confirmCode() }.apply { isEnabled = false }
         password = entry("كلمة سر جديدة (10 أحرف على الأقل)", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
         confirm = entry("تأكيد كلمة السر", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
         activate = button("تفعيل ملف الكابتن") { activateProfile() }.apply { isEnabled = false }
-        val testTip = label("يمكن تجربة رقم Firebase الوهمي المضاف إلى إعدادات المشروع من غير SMS، ولن يتم إنشاء حساب كابتن له.")
+        val testTip = label("يمكن اختبار رقم مصري وهمي مضاف في Firebase بدون SMS حقيقي. تفعيل ملف الكابتن يتطلب وجود سجل مطابق في Drivers.")
         testTip.textSize = 12f
         setPasswordVisibility(false)
     }
@@ -99,10 +124,8 @@ class CaptainActivationActivity : AppCompatActivity() {
 
     private fun normalizedPhone(input: String): String? {
         val raw = input.trim().replace(" ", "").replace("-", "")
-        if (raw == "+16505553434") return raw // Fictional Firebase test only.
         val local = when {
             raw.matches(Regex("^01[0125][0-9]{8}$")) -> raw
-            raw.matches(Regex("^\\+201[0125][0-9]{8}$")) -> "0" + raw.substring(3)
             else -> return null
         }
         return "+20" + local.substring(1)
@@ -112,7 +135,7 @@ class CaptainActivationActivity : AppCompatActivity() {
 
     private fun sendCode() {
         val e164 = normalizedPhone(phone.text.toString())
-        if (e164 == null) { message("اكتب رقم موبايل مصري صحيح، أو رقم الاختبار الوهمي."); return }
+        if (e164 == null) { message("اكتب رقم مصري من 11 رقم يبدأ بـ01، ولا تكتب +20 داخل الخانة."); return }
         verifiedPhone = e164
         verifiedIdToken = null
         verificationId = null
@@ -127,7 +150,13 @@ class CaptainActivationActivity : AppCompatActivity() {
                 }
                 override fun onVerificationFailed(e: FirebaseException) {
                     send.isEnabled = true
-                    message("فشل التحقق: " + (e.localizedMessage ?: "حاول مرة أخرى"))
+                    val kind = when (e) {
+                        is com.google.firebase.FirebaseTooManyRequestsException -> "تم تجاوز عدد محاولات التحقق المسموح. لا تكرر الطلب الآن."
+                        is com.google.firebase.auth.FirebaseAuthInvalidCredentialsException -> "تعذر اعتماد التحقق من التطبيق أو رقم الهاتف."
+                        else -> "فشل إرسال كود التحقق."
+                    }
+                    android.util.Log.e("MashwarakCaptainOTP", "Phone verification failed: " + e.javaClass.simpleName, e)
+                    message(kind + " التفاصيل: " + (e.localizedMessage ?: "خطأ غير معروف"))
                 }
                 override fun onCodeSent(
                     id: String,
@@ -172,10 +201,6 @@ class CaptainActivationActivity : AppCompatActivity() {
                         verifiedIdToken = tokenResult.token
                         if (verifiedIdToken.isNullOrEmpty()) {
                             message("تعذر استلام نتيجة التحقق من Firebase.")
-                        } else if (verifiedPhone.startsWith("+1")) {
-                            // Fictional test: do not link to any real driver record.
-                            message("نجح اختبار Firebase برقم وهمي. لم يتم إنشاء حساب كابتن.")
-                            setPasswordVisibility(false)
                         } else {
                             message("تم تأكيد رقمك. اكتب كلمة السر الجديدة.")
                             setPasswordVisibility(true)
@@ -194,8 +219,8 @@ class CaptainActivationActivity : AppCompatActivity() {
         if (!verifiedPhone.startsWith("+20")) { message("رقم الاختبار للتجربة فقط."); return }
         val first = password.text.toString()
         val second = confirm.text.toString()
-        if (first.length < 10 || first.length > 128 || first.none { it.isLetter() } || first.none { it.isDigit() } || first != second) {
-            message("اكتب كلمة سر 10 أحرف على الأقل، فيها حروف وأرقام، وتأكيد مطابق.")
+        if (first.length < 10 || first.length > 72 || first.none { it.isLetter() } || first.none { it.isDigit() } || first != second) {
+            message("اكتب كلمة سر من 10 إلى 72 حرفًا، تحتوي حروفًا وأرقامًا، وتأكيد مطابق.")
             return
         }
         val apiUrl = BuildConfig.CAPTAIN_API_URL
