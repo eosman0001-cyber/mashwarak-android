@@ -1,6 +1,11 @@
 package com.jekonix.mashwarak
 
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
+import android.text.TextWatcher
+import android.text.Editable
 import android.os.Bundle
 import android.text.InputType
 import android.view.View
@@ -42,88 +47,98 @@ class CaptainActivationActivity : AppCompatActivity() {
     private lateinit var send: Button
     private lateinit var verify: Button
     private lateinit var activate: Button
+    private lateinit var stepPhone: LinearLayout
+    private lateinit var stepOtp: LinearLayout
+    private lateinit var stepPassword: LinearLayout
+    private lateinit var heading: TextView
+    private lateinit var subtitle: TextView
+    private lateinit var progress: TextView
+
+    private fun dp(n: Int) = (n * resources.displayMetrics.density + .5f).toInt()
+    private fun rounded(fill: Int, radius: Int = 20, border: Int = Color.TRANSPARENT): GradientDrawable =
+        GradientDrawable().apply { setColor(fill); cornerRadius = dp(radius).toFloat(); if (border != Color.TRANSPARENT) setStroke(dp(1), border) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        title = "تفعيل ملف الكابتن | مشوارك"
-        val scroll = ScrollView(this)
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            val d = (18 * resources.displayMetrics.density).toInt()
-            setPadding(d, d, d, d)
-            setBackgroundColor(Color.WHITE)
-        }
-        scroll.addView(content)
+        window.statusBarColor = Color.rgb(85, 20, 39)
+        window.navigationBarColor = Color.WHITE
+        val bg = Color.rgb(250, 247, 248)
+        val muted = Color.rgb(125, 105, 115)
+        val gold = Color.rgb(229, 177, 85)
+        val scroll = ScrollView(this).apply { fillViewport = true; setBackgroundColor(bg) }
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(25), dp(20), dp(30)); gravity = Gravity.CENTER_HORIZONTAL }
+        scroll.addView(root)
         setContentView(scroll)
-
-        fun label(s: String) = TextView(this).also {
-            it.text = s
-            it.textSize = 16f
-            it.setTextColor(burgundy)
-            it.setPadding(0, 12, 0, 10)
-            content.addView(it)
+        fun txt(t: String, size: Float, color: Int = burgundy, bold: Boolean = false): TextView = TextView(this).apply {
+            text = t; textSize = size; setTextColor(color); gravity = Gravity.CENTER
+            if (bold) setTypeface(null, Typeface.BOLD)
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
-        fun entry(hint: String, type: Int): EditText = EditText(this).also {
-            it.hint = hint
-            it.inputType = type
-            it.textSize = 17f
-            it.isSingleLine = true
-            content.addView(it)
+        root.addView(txt("MASHWARAK  •  مشوارك", 15f, gold, true).apply {
+            background = rounded(burgundy, 28); setPadding(dp(20), dp(12), dp(20), dp(12))
+        })
+        root.addView(View(this), LinearLayout.LayoutParams(1, dp(20)))
+        progress = txt("01  ━━━━━  02  ─────  03", 12f, muted, true)
+        root.addView(progress)
+        heading = txt("تأكيد رقم الكابتن", 26f, burgundy, true)
+        root.addView(heading, LinearLayout.LayoutParams(-1, dp(54)))
+        subtitle = txt("هنبعت لك رمز تأكيد علشان نفعّل ملفك بأمان", 14f, muted)
+        root.addView(subtitle)
+        root.addView(View(this), LinearLayout.LayoutParams(1, dp(18)))
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(20), dp(18), dp(20)); background = rounded(Color.WHITE, 24, Color.rgb(235, 220, 226)); elevation = dp(3).toFloat() }
+        root.addView(panel, LinearLayout.LayoutParams(-1, -2))
+        fun section() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; layoutDirection = View.LAYOUT_DIRECTION_RTL; panel.addView(this) }
+        fun field(h: String, type: Int): EditText = EditText(this).apply {
+            hint = h; inputType = type; textSize = 17f; isSingleLine = true
+            background = rounded(bg, 14, Color.rgb(230, 215, 222)); setPadding(dp(13), dp(12), dp(13), dp(12))
+            val lp = LinearLayout.LayoutParams(-1, dp(55)); lp.bottomMargin = dp(12); layoutParams = lp
         }
-        fun button(s: String, fn: () -> Unit): Button = Button(this).also {
-            it.text = s
-            it.setOnClickListener { fn() }
-            content.addView(it)
+        fun action(t: String, section: LinearLayout, run: () -> Unit): Button = Button(this).apply {
+            text = t; textSize = 16f; isAllCaps = false; setTextColor(Color.WHITE)
+            background = rounded(burgundy, 14); elevation = dp(2).toFloat()
+            setOnClickListener { animate().scaleX(.97f).scaleY(.97f).setDuration(90).withEndAction { animate().scaleX(1f).scaleY(1f).setDuration(100).start(); run() }.start() }
+            section.addView(this, LinearLayout.LayoutParams(-1, dp(55)))
         }
-
-        label("تأكيد رقم الكابتن وإنشاء كلمة السر")
-        label("هنبعت لك كود تأكيد على رقم الموبايل المسجل، وبعدها تقدر تنشئ كلمة السر.")
-        status = label("ابدأ بكتابة الرقم اللي سجلت بيه في مشوارك.")
-        // A distinct, read-only dialing code prevents accidental +20 / leading-zero duplication.
-        val phoneRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutDirection = View.LAYOUT_DIRECTION_LTR
-            gravity = android.view.Gravity.CENTER_VERTICAL
-        }
-        countryCode = TextView(this).apply {
-            text = "+20"
-            textSize = 19f
-            setTextColor(burgundy)
-            setPadding(18, 18, 18, 18)
-            contentDescription = "مفتاح مصر +20"
-        }
-        phone = EditText(this).apply {
-            hint = "01XXXXXXXXX"
-            inputType = InputType.TYPE_CLASS_PHONE
-            textSize = 18f
-            isSingleLine = true
-            filters = arrayOf(android.text.InputFilter.LengthFilter(11))
-            layoutDirection = View.LAYOUT_DIRECTION_LTR
-            textDirection = View.TEXT_DIRECTION_LTR
-        }
+        stepPhone = section()
+        stepPhone.addView(txt("رقم الموبايل المسجل", 15f, burgundy, true), LinearLayout.LayoutParams(-1, dp(40)))
+        val phoneRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; layoutDirection = View.LAYOUT_DIRECTION_LTR; gravity = Gravity.CENTER_VERTICAL }
+        countryCode = txt("🇪🇬 +20", 18f, burgundy, true).apply { background = rounded(bg, 12); setPadding(dp(10), dp(13), dp(10), dp(13)) }
+        phone = field("01XXXXXXXXX", InputType.TYPE_CLASS_PHONE).apply { filters = arrayOf(android.text.InputFilter.LengthFilter(11)); layoutDirection = View.LAYOUT_DIRECTION_LTR; textDirection = View.TEXT_DIRECTION_LTR }
         phoneRow.addView(countryCode)
-        phoneRow.addView(phone, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        content.addView(phoneRow)
-        intent.getStringExtra("captain_phone")?.takeIf { it.matches(Regex("^01[0125][0-9]{8}$")) }?.let {
-            phone.setText(it)
-            phone.isEnabled = false
-        }
-        send = button("إرسال كود التحقق") { sendCode() }
-        otp = entry("كود التحقق من 6 أرقام", InputType.TYPE_CLASS_NUMBER)
-        verify = button("تأكيد كود التحقق") { confirmCode() }.apply { isEnabled = false }
-        password = entry("كلمة سر جديدة (10 أحرف على الأقل)", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
-        confirm = entry("تأكيد كلمة السر", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
-        activate = button("تفعيل ملف الكابتن") { activateProfile() }.apply { isEnabled = false }
-        val testTip = label("لو الكود اتأخر، تأكد من استقبال رسائل SMS وجرّب لاحقًا من غير تكرار الطلب بسرعة.")
-        testTip.textSize = 12f
-        setPasswordVisibility(false)
+        phoneRow.addView(phone, LinearLayout.LayoutParams(0, dp(55), 1f))
+        stepPhone.addView(phoneRow)
+        send = action("إرسال رمز التحقق", stepPhone) { sendCode() }
+        stepOtp = section()
+        stepOtp.addView(txt("أدخل الرمز المكوّن من 6 أرقام", 16f, burgundy, true), LinearLayout.LayoutParams(-1, dp(55)))
+        otp = field("••••••", InputType.TYPE_CLASS_NUMBER).apply { filters = arrayOf(android.text.InputFilter.LengthFilter(6)); textDirection = View.TEXT_DIRECTION_LTR; gravity = Gravity.CENTER; letterSpacing = .25f }
+        stepOtp.addView(otp)
+        verify = action("تأكيد الرمز", stepOtp) { confirmCode() }.apply { isEnabled = false }
+        val back = txt("تعديل رقم الموبايل", 14f, burgundy, true).apply { setPadding(dp(8), dp(20), dp(8), dp(6)); setOnClickListener { showStep(1) } }
+        stepOtp.addView(back)
+        stepPassword = section()
+        stepPassword.addView(txt("اختار كلمة سر تفتكرها بسهولة", 16f, burgundy, true), LinearLayout.LayoutParams(-1, dp(52)))
+        password = field("كلمة السر الجديدة (8 أحرف أو أكثر)", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        confirm = field("تأكيد كلمة السر", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        stepPassword.addView(password); stepPassword.addView(confirm)
+        activate = action("تفعيل ملفي", stepPassword) { activateProfile() }
+        status = txt("", 13f, muted).apply { setPadding(dp(10), dp(16), dp(10), dp(10)) }
+        root.addView(status)
+        val fixedPhone = intent.getStringExtra("captain_phone")
+        fixedPhone?.takeIf { it.matches(Regex("^01[0125][0-9]{8}$")) }?.let { phone.setText(it); phone.isEnabled = false }
+        showStep(1)
     }
 
-    private fun setPasswordVisibility(visible: Boolean) {
-        val v = if (visible) View.VISIBLE else View.GONE
-        password.visibility = v
-        confirm.visibility = v
-        activate.visibility = v
+    private fun showStep(step: Int) {
+        stepPhone.visibility = if (step == 1) View.VISIBLE else View.GONE
+        stepOtp.visibility = if (step == 2) View.VISIBLE else View.GONE
+        stepPassword.visibility = if (step == 3) View.VISIBLE else View.GONE
+        heading.text = when (step) { 1 -> "تأكيد رقم الكابتن"; 2 -> "رمز التحقق"; else -> "إنشاء كلمة السر" }
+        subtitle.text = when (step) { 1 -> "هنبعت لك رمز تأكيد على رقمك المسجل"; 2 -> "اكتب الرمز اللي وصلك في رسالة SMS"; else -> "فاضل خطوة واحدة لتفعيل ملفك" }
+        progress.text = when (step) { 1 -> "01  ━━━━━  02  ─────  03"; 2 -> "01  ━━━━━  02  ━━━━━  03"; else -> "01  ━━━━━  02  ━━━━━  03 ✓" }
+        status.text = ""
+        val v = when (step) { 1 -> stepPhone; 2 -> stepOtp; else -> stepPassword }
+        v.alpha = 0f; v.translationY = dp(14).toFloat()
+        v.animate().alpha(1f).translationY(0f).setDuration(240).start()
     }
 
     private fun normalizedPhone(input: String): String? {
@@ -143,13 +158,14 @@ class CaptainActivationActivity : AppCompatActivity() {
         verifiedPhone = e164
         verifiedIdToken = null
         verificationId = null
-        setPasswordVisibility(false)
+        showStep(1)
         send.isEnabled = false
         verify.isEnabled = false
         message("جاري طلب كود التحقق...")
         try {
             val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
                 override fun onVerificationCompleted(credential: PhoneAuthCredential) {
+                    verifiedPhone = e164
                     finishFirebaseSignIn(credential)
                 }
                 override fun onVerificationFailed(e: FirebaseException) {
@@ -169,6 +185,7 @@ class CaptainActivationActivity : AppCompatActivity() {
                     verificationId = id
                     verify.isEnabled = true
                     send.isEnabled = true
+                    showStep(2)
                     message("تم طلب إرسال الكود. وصول الرسالة قد يستغرق قليلًا؛ لو ما وصلتش، لا تكرر الطلب بسرعة.")
                 }
             }
@@ -207,7 +224,7 @@ class CaptainActivationActivity : AppCompatActivity() {
                             message("تعذر استلام نتيجة التحقق من Firebase.")
                         } else {
                             message("تم تأكيد رقمك. اكتب كلمة السر الجديدة.")
-                            setPasswordVisibility(true)
+                            showStep(3)
                             activate.isEnabled = true
                         }
                     }?.addOnFailureListener { message("تعذر الحصول على رمز التحقق.") }
@@ -223,8 +240,8 @@ class CaptainActivationActivity : AppCompatActivity() {
         if (!verifiedPhone.startsWith("+20")) { message("رقم الاختبار للتجربة فقط."); return }
         val first = password.text.toString()
         val second = confirm.text.toString()
-        if (first.length < 10 || first.length > 72 || first.none { it.isLetter() } || first.none { it.isDigit() } || first != second) {
-            message("اكتب كلمة سر من 10 إلى 72 حرفًا، تحتوي حروفًا وأرقامًا، وتأكيد مطابق.")
+        if (first.length < 8 || first.length > 72 || first in setOf("12345678", "123456789", "password", "00000000") || first != second) {
+            message("اختار كلمة سر من 8 أحرف أو أكثر، وتأكد إن الخانتين متطابقتين. تجنب الكلمات الشائعة.")
             return
         }
         val apiUrl = BuildConfig.CAPTAIN_API_URL
