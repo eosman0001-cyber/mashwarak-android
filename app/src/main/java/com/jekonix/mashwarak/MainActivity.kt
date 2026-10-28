@@ -61,30 +61,6 @@ import com.google.firebase.messaging.FirebaseMessaging
 
 class MainActivity : AppCompatActivity() {
 
-    // V174: command-only launcher. NEVER return ID token, OTP or passwords to WebView.
-    private var lastCaptainLaunchElapsed = 0L
-    inner class MashwarakCaptainLauncher {
-        @JavascriptInterface
-        fun openWithPhone(localPhone: String) {
-            if (!Regex("^01[0125][0-9]{8}$").matches(localPhone)) return
-            runOnUiThread {
-                val now = SystemClock.elapsedRealtime()
-                if (now - lastCaptainLaunchElapsed < 3000L) return@runOnUiThread
-                lastCaptainLaunchElapsed = now
-                startActivity(Intent(this@MainActivity, CaptainActivationActivity::class.java).putExtra("captain_phone", localPhone))
-            }
-        }
-        @JavascriptInterface
-        fun open() {
-            runOnUiThread {
-                val now = SystemClock.elapsedRealtime()
-                if (now - lastCaptainLaunchElapsed < 3000L) return@runOnUiThread
-                lastCaptainLaunchElapsed = now
-                startActivity(Intent(this@MainActivity, CaptainActivationActivity::class.java))
-            }
-        }
-    }
-
     private lateinit var webView: WebView
     private lateinit var progress: ProgressBar
     private lateinit var splash: FrameLayout
@@ -362,9 +338,6 @@ class MainActivity : AppCompatActivity() {
             "MashwarakLocation"
         )
 
-        // Non-sensitive button launcher only. Credentials and Firebase token
-        // stay in CaptainActivationActivity, never passed through this interface.
-        webView.addJavascriptInterface(MashwarakCaptainLauncher(), "MashwarakCaptain")
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(

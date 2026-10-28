@@ -24,12 +24,6 @@
             android:name="com.google.android.geo.API_KEY"
             android:value="${MAPS_API_KEY}"/>
 
-        <!-- Native Firebase verification: no ID tokens exposed to WebView -->
-        <activity
-            android:name=".CaptainActivationActivity"
-            android:exported="false"
-            android:screenOrientation="portrait"/>
-
         <activity
             android:name=".CameraCaptureActivity"
             android:screenOrientation="portrait"

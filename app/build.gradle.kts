@@ -40,8 +40,6 @@ android {
         versionName = releaseVersionName
 
         buildConfigField("String", "APP_URL", "\"${cfg("APP_URL")}\"")
-        // Public deployed Apps Script /exec URL; never a private secret.
-        buildConfigField("String", "CAPTAIN_API_URL", "\"${cfg("CAPTAIN_API_URL")}\"")
         buildConfigField("String", "FCM_PROJECT_ID", "\"${cfg("FCM_PROJECT_ID")}\"")
         buildConfigField("String", "FCM_API_KEY", "\"${cfg("FCM_API_KEY")}\"")
         buildConfigField("String", "FCM_APP_ID", "\"${cfg("FCM_APP_ID")}\"")
@@ -85,7 +83,6 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.4.1")
     implementation("androidx.camera:camera-view:1.4.1")
     implementation("com.google.firebase:firebase-messaging:24.1.0")
-    implementation("com.google.firebase:firebase-auth:24.0.1")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("com.google.android.gms:play-services-maps:20.0.0")
     implementation("com.google.android.libraries.places:places:5.1.1")
