@@ -1,6 +1,7 @@
 package com.jekonix.mashwarak
 
-import android.app.Activity
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.ComponentActivity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -23,7 +24,7 @@ import kotlin.math.abs
  * V1.13.11: Native onboarding with 4 locally bundled illustrated app previews.
  * Shows once per version-2 intro on normal launch, never uses network or GPS.
  */
-class OnboardingActivity : Activity() {
+class OnboardingActivity : ComponentActivity() {
     companion object {
         const val EXTRA_REVIEW = "mashwarak_onboarding_review"
         const val PREFS = "mashwarak_onboarding"
@@ -59,6 +60,9 @@ class OnboardingActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() { finish() }
+        })
         reviewMode = intent.getBooleanExtra(EXTRA_REVIEW, false)
         step = savedInstanceState?.getInt("onboarding_step")?.coerceIn(0, 3) ?: 0
         WindowCompat.setDecorFitsSystemWindows(window, false)

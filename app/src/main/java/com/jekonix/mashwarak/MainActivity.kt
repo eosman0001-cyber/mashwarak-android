@@ -48,6 +48,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
@@ -72,6 +74,10 @@ class MainActivity : AppCompatActivity() {
     private var pendingDownloadName: String? = null
     private var pendingDownloadDataUrl: String? = null
     private var pageShown = false
+    private var nativeLocationRunning = false
+    private var locationGeneration = 0
+    private val lifecycleHandler = Handler(Looper.getMainLooper())
+    private val trustedFrameOrigins by lazy { BuildConfig.WEB_APP_ORIGINS.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet() }
     private var openNotificationsAfterLoad = false
     private var nativeBackRequestInFlight = false
 
@@ -133,7 +139,7 @@ class MainActivity : AppCompatActivity() {
         val mode = data.getStringExtra(LocationPickerActivity.EXTRA_MODE).orEmpty().uppercase().let { if (it == "FROM") "FROM" else "TO" }
         val lat = data.getDoubleExtra(LocationPickerActivity.EXTRA_LAT, Double.NaN)
         val lng = data.getDoubleExtra(LocationPickerActivity.EXTRA_LNG, Double.NaN)
-        if (lat.isNaN() || lng.isNaN()) return@registerForActivityResult
+        if (!NativePolicy.validCoordinates(lat, lng)) return@registerForActivityResult
         broadcastNativePickerResult(
             mode = mode,
             lat = lat,
@@ -287,7 +293,7 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(root)
 
-        ContextCompat.registerReceiver(
+        if (BuildConfig.DIRECT_UPDATES) ContextCompat.registerReceiver(
             this,
             updateDownloadReceiver,
             IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
@@ -315,28 +321,15 @@ class MainActivity : AppCompatActivity() {
             javaScriptEnabled = true
             domStorageEnabled = true
             databaseEnabled = true
-            allowFileAccess = true
+            allowFileAccess = false
             allowContentAccess = true
-            javaScriptCanOpenWindowsAutomatically = true
+            javaScriptCanOpenWindowsAutomatically = false
             mediaPlaybackRequiresUserGesture = false
             setGeolocationEnabled(true)
             userAgentString = "$userAgentString MashwarakAndroid/${BuildConfig.VERSION_NAME}"
         }
 
-        webView.addJavascriptInterface(
-            MashwarakCameraBridge(),
-            "MashwarakCamera"
-        )
-
-        webView.addJavascriptInterface(
-            MashwarakDownloadBridge(),
-            "MashwarakDownload"
-        )
-
-        webView.addJavascriptInterface(
-            MashwarakLocationBridge(),
-            "MashwarakLocation"
-        )
+        installScopedNativeBridge()
 
 
         webView.webViewClient = object : WebViewClient() {
@@ -373,7 +366,20 @@ class MainActivity : AppCompatActivity() {
                     return true
                 }
 
+                if (!isTrustedNavigation(uri)) {
+                    if (request.isForMainFrame && scheme == "https") {
+                        runCatching { startActivity(Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE)) }
+                    }
+                    return true
+                }
                 return false
+            }
+
+            override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: android.webkit.WebResourceError?) {
+                if (request?.isForMainFrame == true) {
+                    hideSplash()
+                    Toast.makeText(this@MainActivity, "تعذر الاتصال. استخدم مساعدة ثم تحديث الصفحة للمحاولة مجددًا.", Toast.LENGTH_LONG).show()
+                }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
@@ -384,17 +390,15 @@ class MainActivity : AppCompatActivity() {
                 // Small delay prevents the raw Google Sites frame from
                 // flashing before the page is visually ready.
                 if (!pageShown) {
-                    pageShown = true
+                    // V201: app readiness hides splash immediately; bounded fallback supports old UI.
                     // V179: let the embedded website settle after the outer page
                     // finishes. Keep the branded splash visible instead of exposing
                     // a transient white WebView/Google Sites frame.
                     splash.postDelayed({
                         if (!isFinishing && !isDestroyed) {
-                            hideSplash()
-                            openNotificationsIfRequested()
-                            dispatchPendingSharedDestination()
+                            revealApp()
                         }
-                    }, 1800)
+                    }, 4000)
                 } else {
                     hideSplash()
                     openNotificationsIfRequested()
@@ -409,6 +413,7 @@ class MainActivity : AppCompatActivity() {
                 callback: GeolocationPermissions.Callback?
             ) {
                 if (callback == null) return
+                if (origin == null || !trustedFrameOrigins.contains(origin.trimEnd('/'))) { callback.invoke(origin, false, false); return }
                 val fine = ContextCompat.checkSelfPermission(
                     this@MainActivity,
                     Manifest.permission.ACCESS_FINE_LOCATION
@@ -499,7 +504,7 @@ class MainActivity : AppCompatActivity() {
     /**
      * Android edge-swipe / system Back must respect the Mashwarak UI hierarchy
      * inside the Google Sites -> Apps Script frame:
-     * inner screen -> side drawer -> customer home -> exit app.
+     * wizard previous step -> previous screen -> customer home -> exit app.
      *
      * Because the Mashwarak page is inside a cross-origin frame, Android cannot
      * call its function directly. We broadcast a postMessage through the frame
@@ -623,12 +628,10 @@ class MainActivity : AppCompatActivity() {
 
 
     inner class MashwarakLocationBridge {
-        @JavascriptInterface
         fun requestCurrentLocation() {
             runOnUiThread { requestNativeCurrentLocation() }
         }
 
-        @JavascriptInterface
         fun openNativePicker(mode: String, lat: String, lng: String, label: String) {
             runOnUiThread {
                 launchNativeLocationPicker(
@@ -642,10 +645,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchNativeLocationPicker(mode: String, lat: Double?, lng: Double?, label: String) {
+        locationGeneration++
         val intent = Intent(this, LocationPickerActivity::class.java).apply {
             putExtra(LocationPickerActivity.EXTRA_MODE, mode)
-            if (lat != null) putExtra(LocationPickerActivity.EXTRA_LAT, lat)
-            if (lng != null) putExtra(LocationPickerActivity.EXTRA_LNG, lng)
+            if (lat != null && lng != null && NativePolicy.validCoordinates(lat, lng)) {
+                putExtra(LocationPickerActivity.EXTRA_LAT, lat)
+                putExtra(LocationPickerActivity.EXTRA_LNG, lng)
+            }
             putExtra(LocationPickerActivity.EXTRA_LABEL, label)
         }
         nativeLocationPicker.launch(intent)
@@ -724,6 +730,9 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("MissingPermission")
     private fun requestNativeCurrentLocationNow() {
+        if (nativeLocationRunning || isDestroyed) return
+        nativeLocationRunning = true
+        val generation = ++locationGeneration
         val fused = LocationServices.getFusedLocationProviderClient(this)
         val timeoutHandler = Handler(Looper.getMainLooper())
         var finished = false
@@ -733,11 +742,13 @@ class MainActivity : AppCompatActivity() {
         fun finish(location: Location?) {
             if (finished) return
             finished = true
+            nativeLocationRunning = false
             cancellation.cancel()
             timeoutHandler.removeCallbacksAndMessages(null)
-            if (location != null) {
-                broadcastNativeCurrentLocation(location)
-                reverseGeocodeAndBroadcast(location)
+            if (isDestroyed || isFinishing || generation != locationGeneration) return
+            if (isUsableLocation(location)) {
+                broadcastNativeCurrentLocation(location!!)
+                reverseGeocodeAndBroadcast(location!!)
             } else {
                 fallbackLocationManager()
             }
@@ -745,7 +756,7 @@ class MainActivity : AppCompatActivity() {
 
         fused.lastLocation
             .addOnSuccessListener { last ->
-                cached = last
+                cached = last?.takeIf { isUsableLocation(it) }
                 if (last != null) {
                     val age = System.currentTimeMillis() - last.time
                     if (age in 0..120_000L && last.accuracy <= 120f) {
@@ -759,9 +770,7 @@ class MainActivity : AppCompatActivity() {
                     .addOnSuccessListener { fresh -> finish(fresh ?: cached) }
                     .addOnFailureListener { finish(cached) }
             }
-            .addOnFailureListener {
-                fallbackLocationManager()
-            }
+            .addOnFailureListener { finish(null) }
     }
 
     @SuppressLint("MissingPermission")
@@ -774,7 +783,7 @@ class MainActivity : AppCompatActivity() {
         var best: Location? = null
         for (provider in providers) {
             val loc = try { manager.getLastKnownLocation(provider) } catch (_: Exception) { null }
-            if (loc != null && (best == null || loc.time > (best?.time ?: 0L))) best = loc
+            if (isUsableLocation(loc) && (best == null || loc!!.time > (best?.time ?: 0L))) best = loc
         }
         if (best != null) {
             broadcastNativeCurrentLocation(best!!)
@@ -795,6 +804,8 @@ class MainActivity : AppCompatActivity() {
 
     @Suppress("DEPRECATION")
     private fun reverseGeocodeAndBroadcast(location: Location) {
+        val generation = locationGeneration
+        if (locationExecutor.isShutdown) return
         locationExecutor.execute {
             val address = try {
                 Geocoder(this, Locale("ar", "EG"))
@@ -826,6 +837,7 @@ class MainActivity : AppCompatActivity() {
 
                 if (label.isNotBlank()) {
                     runOnUiThread {
+                        if (isDestroyed || generation != locationGeneration) return@runOnUiThread
                         broadcastLocationMessage(
                             type = "mashwarak-current-location-result",
                             lat = location.latitude,
@@ -1196,7 +1208,9 @@ class MainActivity : AppCompatActivity() {
         // offers guidance and update checks. No duplicate contact action.
 
         val storedLatest = updatePrefs.getString(PREF_AVAILABLE_VERSION, "").orEmpty()
-        val updateSubtitle = if (isVersionNewer(storedLatest, BuildConfig.VERSION_NAME)) {
+        val updateSubtitle = if (!BuildConfig.DIRECT_UPDATES) {
+            "الإصدار الحالي ${BuildConfig.VERSION_NAME} • التحديثات من Google Play"
+        } else if (isVersionNewer(storedLatest, BuildConfig.VERSION_NAME)) {
             "تحديث جديد v$storedLatest متاح الآن"
         } else {
             "الإصدار الحالي ${BuildConfig.VERSION_NAME} • فحص وتنزيل التحديثات"
@@ -1338,6 +1352,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showUpdateCenter() {
+        if (!BuildConfig.DIRECT_UPDATES) {
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=$packageName"))) }
+            return
+        }
         val dialog = android.app.Dialog(this)
         val sheet = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1598,6 +1616,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startUpdateDownload(info: UpdateInfo): Boolean {
+        if (!BuildConfig.DIRECT_UPDATES) return false
         return try {
             val request = DownloadManager.Request(Uri.parse(info.downloadUrl)).apply {
                 setTitle("تحديث مشوارك ${info.versionName}")
@@ -1660,6 +1679,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestInstallUpdate(uri: Uri) {
+        if (!BuildConfig.DIRECT_UPDATES) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
             updatePrefs.edit()
                 .putString(PREF_PENDING_INSTALL_URI, uri.toString())
@@ -1700,6 +1720,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkForUpdatesSilentlyOncePerDay() {
+        if (!BuildConfig.DIRECT_UPDATES) return
         val now = System.currentTimeMillis()
         val last = updatePrefs.getLong(PREF_LAST_UPDATE_CHECK, 0L)
         if (last > 0L && now - last < UPDATE_CHECK_INTERVAL_MS) return
@@ -1724,6 +1745,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applyStoredUpdateIndicator() {
+        if (!BuildConfig.DIRECT_UPDATES) return
         val latest = updatePrefs.getString(PREF_AVAILABLE_VERSION, "").orEmpty()
         if (::helpButton.isInitialized) {
             helpButton.text = if (isVersionNewer(latest, BuildConfig.VERSION_NAME)) "مساعدة ↑" else "مساعدة"
@@ -1744,6 +1766,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkPendingUpdateInstallOnResume() {
+        if (!BuildConfig.DIRECT_UPDATES) return
         val raw = updatePrefs.getString(PREF_PENDING_INSTALL_URI, "").orEmpty()
         if (raw.isBlank()) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) return
@@ -2024,6 +2047,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showSplash() {
+        pageShown = false
+        lifecycleHandler.removeCallbacksAndMessages(null)
+        lifecycleHandler.postDelayed({
+            if (!pageShown && !isDestroyed) { hideSplash(); Toast.makeText(this, "الاتصال بطيء. انتظر قليلًا أو أعد المحاولة من مساعدة.", Toast.LENGTH_LONG).show() }
+        }, 25000)
         splash.alpha = 1f
         splash.visibility = View.VISIBLE
         splash.bringToFront()
@@ -2041,8 +2069,53 @@ class MainActivity : AppCompatActivity() {
             .start()
     }
 
+    private fun isUsableLocation(location: Location?): Boolean = location != null &&
+        NativePolicy.usableLocation(location.latitude, location.longitude, location.time, location.accuracy, System.currentTimeMillis())
+
+    private fun isTrustedNavigation(uri: Uri): Boolean {
+        if (uri.scheme != "https" || uri.userInfo != null || (uri.port != -1 && uri.port != 443)) return false
+        val origin = "https://${uri.host.orEmpty()}"
+        if (trustedFrameOrigins.contains(origin)) return true
+        if (uri.host == Uri.parse(BuildConfig.APP_URL).host) return true
+        val deployed = Uri.parse(BuildConfig.WEB_APP_EXEC_URL)
+        val deploymentPath = deployed.path.orEmpty().substringBeforeLast('/') + "/"
+        return deployed.scheme == "https" && deployed.host == "script.google.com" &&
+            uri.host == deployed.host && deploymentPath.length > 20 && uri.path.orEmpty().startsWith(deploymentPath)
+    }
+
+    private fun revealApp() {
+        if (isDestroyed || isFinishing) return
+        pageShown = true
+        lifecycleHandler.removeCallbacksAndMessages(null)
+        hideSplash()
+        openNotificationsIfRequested()
+        dispatchPendingSharedDestination()
+    }
+
+    private fun installScopedNativeBridge() {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) || trustedFrameOrigins.isEmpty()) {
+            Toast.makeText(this, "حدّث Android System WebView للاستفادة من الخريطة والكاميرا داخل التطبيق.", Toast.LENGTH_LONG).show()
+            return
+        }
+        WebViewCompat.addWebMessageListener(webView, "MashwarakNativeV201", trustedFrameOrigins) { _, message, origin, _, _ ->
+            if (isDestroyed || !trustedFrameOrigins.contains(origin.toString().trimEnd('/'))) return@addWebMessageListener
+            if (message.type != androidx.webkit.WebMessageCompat.TYPE_STRING) return@addWebMessageListener
+            val raw = message.data ?: return@addWebMessageListener
+            if (raw.length > 12 * 1024 * 1024 + 1024) return@addWebMessageListener
+            runCatching {
+                val data = JSONObject(raw)
+                when (data.optString("action")) {
+                    "ready" -> revealApp()
+                    "camera" -> MashwarakCameraBridge().setCaptureMode(data.optString("mode"))
+                    "location" -> requestNativeCurrentLocation()
+                    "picker" -> MashwarakLocationBridge().openNativePicker(data.optString("mode"), data.optString("lat"), data.optString("lng"), data.optString("label").take(300))
+                    "saveImage" -> MashwarakDownloadBridge().saveBase64Image(data.optString("name"), data.optString("data"))
+                }
+            }
+        }
+    }
+
     inner class MashwarakCameraBridge {
-        @JavascriptInterface
         fun setCaptureMode(mode: String?) {
             requestedCameraFacing =
                 if (mode.equals("front", ignoreCase = true)) "front" else "rear"
@@ -2050,12 +2123,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     inner class MashwarakDownloadBridge {
-        @JavascriptInterface
         fun saveBase64Image(fileName: String?, dataUrl: String?) {
             val safeName = sanitizePngFileName(fileName)
             val safeData = dataUrl.orEmpty()
 
-            if (safeData.isBlank() || !safeData.contains("base64,")) {
+            if (!safeData.startsWith("data:image/png;base64,") || safeData.length > 12 * 1024 * 1024) {
                 runOnUiThread {
                     Toast.makeText(
                         this@MainActivity,
@@ -2088,7 +2160,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun sanitizePngFileName(fileName: String?): String {
         var name = fileName
-            ?.trim()
+            ?.trim()?.take(100)
             ?.replace(Regex("""[\\/:*?"<>|]"""), "_")
             ?.takeIf { it.isNotBlank() }
             ?: "Mashwarak-${System.currentTimeMillis()}.png"
@@ -2209,6 +2281,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         runCatching { unregisterReceiver(updateDownloadReceiver) }
+        lifecycleHandler.removeCallbacksAndMessages(null)
+        locationGeneration++
+        locationExecutor.shutdownNow()
+        fileCallback?.onReceiveValue(null)
+        fileCallback = null
         updateExecutor.shutdownNow()
         if (::webView.isInitialized) webView.destroy()
         super.onDestroy()

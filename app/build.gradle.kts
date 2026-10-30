@@ -12,8 +12,8 @@ if (cfgFile.exists()) cfgFile.inputStream().use { cfg.load(it) }
 fun cfg(name: String, fallback: String = "") =
     (cfg.getProperty(name) ?: fallback).replace("\\", "\\\\").replace("\"", "\\\"")
 
-val releaseVersionName = System.getenv("MASHWARAK_VERSION_NAME")?.trim().orEmpty().ifBlank { "1.13.11" }
-val releaseVersionCode = System.getenv("MASHWARAK_VERSION_CODE")?.trim()?.toIntOrNull() ?: 1013011
+val releaseVersionName = System.getenv("MASHWARAK_VERSION_NAME")?.trim().orEmpty().ifBlank { "1.13.17" }
+val releaseVersionCode = System.getenv("MASHWARAK_VERSION_CODE")?.trim()?.toIntOrNull() ?: 1013017
 
 android {
     signingConfigs {
@@ -30,15 +30,17 @@ android {
     }
 
     namespace = "com.jekonix.mashwarak"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.jekonix.mashwarak"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 36
         versionCode = releaseVersionCode
         versionName = releaseVersionName
 
+        buildConfigField("String", "WEB_APP_EXEC_URL", "\"${cfg("WEB_APP_EXEC_URL")}\"")
+        buildConfigField("String", "WEB_APP_ORIGINS", "\"${cfg("WEB_APP_ORIGINS")}\"")
         buildConfigField("String", "APP_URL", "\"${cfg("APP_URL")}\"")
         buildConfigField("String", "FCM_PROJECT_ID", "\"${cfg("FCM_PROJECT_ID")}\"")
         buildConfigField("String", "FCM_API_KEY", "\"${cfg("FCM_API_KEY")}\"")
@@ -55,6 +57,18 @@ android {
         // Reuse the same Android-restricted key for Places API (New).
         // The key is injected by GitHub Actions and is never committed to source.
         buildConfigField("String", "MAPS_API_KEY", "\"${finalMapsApiKey}\"")
+    }
+
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("direct") {
+            dimension = "distribution"
+            buildConfigField("boolean", "DIRECT_UPDATES", "true")
+        }
+        create("play") {
+            dimension = "distribution"
+            buildConfigField("boolean", "DIRECT_UPDATES", "false")
+        }
     }
 
     buildFeatures { buildConfig = true }

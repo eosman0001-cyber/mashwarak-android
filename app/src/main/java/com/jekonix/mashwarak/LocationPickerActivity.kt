@@ -15,6 +15,8 @@ import android.os.Looper
 import android.os.SystemClock
 import android.location.Location
 import android.location.LocationManager
+import android.view.inputmethod.InputMethodManager
+import android.view.MotionEvent
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -74,6 +76,8 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
     private var selectedPoint: LatLng? = null
     private var selectedAddress: Address? = null
     private var movingToLocation = false
+    private var searchGeneration = 0
+    private var keyboardAutoHidden = false
     private var mapTilesLoaded = false
     private var locationRequestRunning = false
     private var allowCameraIdleSelection = false
@@ -169,7 +173,12 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
                 }
                 override fun afterTextChanged(s: Editable?) = Unit
             })
+            setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_UP) keyboardAutoHidden = false
+                false
+            }
             setOnFocusChangeListener { _, hasFocus ->
+                if (hasFocus) keyboardAutoHidden = false
                 if (!hasFocus) mainHandler.postDelayed({ hideSuggestions() }, 180L)
             }
         }
@@ -194,6 +203,10 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
         }
         val suggestionsScroll = ScrollView(this).apply {
             isFillViewport = false
+            setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_MOVE) hideSearchKeyboard()
+                false
+            }
             addView(suggestionsList, FrameLayout.LayoutParams(-1, -2))
         }
         suggestionsCard = LinearLayout(this).apply {
@@ -343,6 +356,10 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
 
         googleMap.setOnCameraMoveStartedListener { reason ->
             if (reason == GoogleMap.OnCameraMoveStartedListener.REASON_GESTURE) {
+                searchGeneration++
+                autocompleteRunnable?.let { mainHandler.removeCallbacks(it) }
+                hideSuggestions()
+                hideSearchKeyboard()
                 allowCameraIdleSelection = true
             }
             if (!movingToLocation) setStatus("", false)
@@ -389,7 +406,8 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
             locationRequestRunning = false
             cancellation.cancel()
             mainHandler.removeCallbacksAndMessages(LOCATION_TIMEOUT_TOKEN)
-            if (location != null) {
+            if (isDestroyed || isFinishing) return
+            if (location != null && NativePolicy.usableLocation(location.latitude, location.longitude, location.time, location.accuracy, System.currentTimeMillis())) {
                 moveCameraTo(LatLng(location.latitude, location.longitude), if (fresh) 18f else 17f)
                 if (!fresh) setStatus("تم استخدام آخر موقع متاح، وجاري قراءة المكان...", false)
             } else {
@@ -401,7 +419,7 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
 
         fused.lastLocation
             .addOnSuccessListener { last ->
-                cached = last
+                cached = last?.takeIf { NativePolicy.usableLocation(it.latitude, it.longitude, it.time, it.accuracy, System.currentTimeMillis()) }
                 if (last != null) {
                     val age = System.currentTimeMillis() - last.time
                     if (age in 0..600_000L && last.accuracy <= 250f) {
@@ -435,7 +453,7 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
             val enabled = try { manager.isProviderEnabled(provider) } catch (_: Exception) { false }
             if (!enabled) continue
             val loc = try { manager.getLastKnownLocation(provider) } catch (_: Exception) { null }
-            if (loc != null && (best == null || loc.time > (best?.time ?: 0L))) best = loc
+            if (loc != null && NativePolicy.usableLocation(loc.latitude, loc.longitude, loc.time, loc.accuracy, System.currentTimeMillis()) && (best == null || loc.time > (best?.time ?: 0L))) best = loc
         }
         return best
     }
@@ -463,6 +481,7 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
     }
 
     private fun requestAutocomplete(query: String, immediate: Boolean) {
+        searchGeneration++
         autocompleteRunnable?.let { mainHandler.removeCallbacks(it) }
         if (query.length < 2) {
             hideSuggestions()
@@ -474,6 +493,7 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
     }
 
     private fun performAutocomplete(query: String) {
+        val generation = searchGeneration
         val client = placesClient
         if (client == null) {
             searchLocationWithGeocoder(query)
@@ -489,16 +509,23 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
 
         client.findAutocompletePredictions(request)
             .addOnSuccessListener { response ->
+                if (isDestroyed || generation != searchGeneration) return@addOnSuccessListener
                 val predictions = response.autocompletePredictions
                 if (predictions.isEmpty()) {
                     hideSuggestions()
                     setStatus("لم نجد اقتراحات مطابقة. جرّب اسمًا أو عنوانًا أوضح.", true)
                 } else {
                     renderSuggestions(predictions.take(5))
+                    mainHandler.postDelayed({
+                        if (!isDestroyed && generation == searchGeneration && !keyboardAutoHidden && suggestionsCard.visibility == View.VISIBLE) {
+                            hideSearchKeyboard(); keyboardAutoHidden = true
+                        }
+                    }, 1000)
                     setStatus("اختر المكان الصحيح من الاقتراحات.", false)
                 }
             }
             .addOnFailureListener {
+                if (isDestroyed || generation != searchGeneration) return@addOnFailureListener
                 hideSuggestions()
                 searchLocationWithGeocoder(query)
             }
@@ -544,11 +571,18 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
         suggestionsCard.bringToFront()
     }
 
+    private fun hideSearchKeyboard() {
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(searchInput.windowToken, 0)
+    }
+
     private fun hideSuggestions() {
         if (::suggestionsCard.isInitialized) suggestionsCard.visibility = View.GONE
     }
 
     private fun selectPrediction(prediction: AutocompletePrediction) {
+        val generation = ++searchGeneration
+        autocompleteRunnable?.let { mainHandler.removeCallbacks(it) }
+        hideSearchKeyboard()
         val client = placesClient ?: return searchLocationWithGeocoder(prediction.getFullText(null).toString())
         hideSuggestions()
         setStatus("جاري فتح المكان...", false)
@@ -559,6 +593,7 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
             .build()
         client.fetchPlace(request)
             .addOnSuccessListener { response ->
+                if (isDestroyed || generation != searchGeneration) return@addOnSuccessListener
                 val point = response.place.location
                 if (point == null) {
                     searchLocationWithGeocoder(prediction.getFullText(null).toString())
@@ -577,12 +612,15 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
                 moveCameraTo(point, 17f)
             }
             .addOnFailureListener {
+                if (isDestroyed || generation != searchGeneration) return@addOnFailureListener
                 searchLocationWithGeocoder(prediction.getFullText(null).toString())
             }
     }
 
     @Suppress("DEPRECATION")
     private fun searchLocationWithGeocoder(query: String) {
+        val generation = searchGeneration
+        if (isDestroyed || executor.isShutdown) return
         if (query.isBlank()) {
             Toast.makeText(this, "اكتب اسم المكان أو العنوان أولًا", Toast.LENGTH_SHORT).show()
             return
@@ -594,6 +632,7 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
                 Geocoder(this, Locale("ar", "EG")).getFromLocationName(query, 5)?.firstOrNull()
             } catch (_: Exception) { null }
             runOnUiThread {
+                if (isDestroyed || generation != searchGeneration) return@runOnUiThread
                 if (address == null) {
                     setStatus("لم نجد المكان. جرّب اسمًا أو عنوانًا أوضح.", true)
                 } else {
@@ -638,17 +677,18 @@ class LocationPickerActivity : AppCompatActivity(), OnMapReadyCallback {
     private fun reverseGeocode(point: LatLng) {
         selectedPoint = point
         setStatus("جاري قراءة المكان...", false)
+        if (isDestroyed || executor.isShutdown) return
         executor.execute {
             val address = try {
                 Geocoder(this, Locale("ar", "EG")).getFromLocation(point.latitude, point.longitude, 1)?.firstOrNull()
             } catch (_: Exception) { null }
             runOnUiThread {
-                if (selectedPoint != point) return@runOnUiThread
+                if (isDestroyed || selectedPoint != point) return@runOnUiThread
                 selectedAddress = address
                 if (address != null) {
                     val label = readableLabel(address)
                     addressText.text = label.ifBlank { "موقع محدد على الخريطة" }
-                    setStatus("تم تحديد الموقع بدقة", false)
+                    setStatus("تم تحديد النقطة على الخريطة", false)
                 } else {
                     addressText.text = "موقع محدد على الخريطة"
                     setStatus("تم تحديد النقطة؛ سيُحفظ الموقع الدقيق.", false)

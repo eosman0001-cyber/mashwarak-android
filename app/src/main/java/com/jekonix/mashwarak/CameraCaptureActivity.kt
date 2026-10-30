@@ -19,6 +19,9 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import java.io.File
@@ -55,6 +58,7 @@ class CameraCaptureActivity : AppCompatActivity() {
         requestedFacing =
             intent.getStringExtra(EXTRA_FACING)?.lowercase() ?: "rear"
 
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         buildUi()
 
         if (
@@ -148,6 +152,12 @@ class CameraCaptureActivity : AppCompatActivity() {
         )
 
         setContentView(root)
+        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
+        ViewCompat.requestApplyInsets(root)
     }
 
     private fun startCamera() {
@@ -155,6 +165,7 @@ class CameraCaptureActivity : AppCompatActivity() {
 
         future.addListener({
             try {
+                if (isDestroyed || isFinishing) return@addListener
                 val provider = future.get()
 
                 val preview = Preview.Builder().build().also {
@@ -204,6 +215,8 @@ class CameraCaptureActivity : AppCompatActivity() {
         val directory = File(cacheDir, "camera_captures").apply {
             mkdirs()
         }
+
+        directory.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 24L * 60L * 60L * 1000L }?.forEach { it.delete() }
 
         val file = File(
             directory,
