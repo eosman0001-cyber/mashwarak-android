@@ -5,6 +5,9 @@ on:
   push:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,13 +25,34 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.10.2'
+          gradle-version: '8.11.1'
 
       - name: Build Debug APK
-        run: gradle :app:assembleDebug
+        env:
+          MASHWARAK_MAPS_API_KEY: ${{ secrets.MASHWARAK_MAPS_API_KEY }}
+        run: gradle :app:assembleDirectDebug :app:assemblePlayDebug :app:lintDirectDebug :app:lintPlayDebug
+
+      - name: Check Play APK target and installer permission
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/play/debug/app-play-debug.apk"
+          BUILD_TOOLS="$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          AAPT="$ANDROID_HOME/build-tools/$BUILD_TOOLS/aapt"
+          BADGING="$($AAPT dump badging "$APK")"
+          if ! grep -q "targetSdkVersion:'36'" <<< "$BADGING"; then
+            echo "::error::Play build does not target API 36"
+            exit 1
+          fi
+          PERMISSIONS="$($AAPT dump permissions "$APK")"
+          if grep -q 'android.permission.REQUEST_INSTALL_PACKAGES' <<< "$PERMISSIONS"; then
+            echo "::error::Play APK must not request installation of external APKs"
+            exit 1
+          fi
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS/zipalign" -c -P 16 4 "$APK"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Mashwarak-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/**/debug/*.apk

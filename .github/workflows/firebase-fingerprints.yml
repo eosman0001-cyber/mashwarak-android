@@ -44,3 +44,7 @@ jobs:
             -storepass "$KEYSTORE_PASSWORD" \
             -alias "$KEY_ALIAS" \
             | grep -E 'SHA1:|SHA256:'
+
+      - name: Remove restored signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/mashwarak-release-key.jks"
