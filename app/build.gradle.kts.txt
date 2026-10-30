@@ -1,0 +1,103 @@
+import java.util.Properties
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+val cfg = Properties()
+val cfgFile = rootProject.file("mashwarak-config.properties")
+if (cfgFile.exists()) cfgFile.inputStream().use { cfg.load(it) }
+
+fun cfg(name: String, fallback: String = "") =
+    (cfg.getProperty(name) ?: fallback).replace("\\", "\\\\").replace("\"", "\\\"")
+
+val releaseVersionName = System.getenv("MASHWARAK_VERSION_NAME")?.trim().orEmpty().ifBlank { "1.13.17" }
+val releaseVersionCode = System.getenv("MASHWARAK_VERSION_CODE")?.trim()?.toIntOrNull() ?: 1013017
+
+android {
+    signingConfigs {
+        create("release") {
+            val ksPath = System.getenv("MASHWARAK_KEYSTORE_PATH")
+            if (!ksPath.isNullOrBlank()) {
+                storeFile = file(ksPath)
+                storeType = "pkcs12"
+                storePassword = System.getenv("MASHWARAK_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("MASHWARAK_KEY_ALIAS")
+                keyPassword = System.getenv("MASHWARAK_KEY_PASSWORD")
+            }
+        }
+    }
+
+    namespace = "com.jekonix.mashwarak"
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "com.jekonix.mashwarak"
+        minSdk = 24
+        targetSdk = 36
+        versionCode = releaseVersionCode
+        versionName = releaseVersionName
+
+        buildConfigField("String", "WEB_APP_EXEC_URL", "\"${cfg("WEB_APP_EXEC_URL")}\"")
+        buildConfigField("String", "WEB_APP_ORIGINS", "\"${cfg("WEB_APP_ORIGINS")}\"")
+        buildConfigField("String", "APP_URL", "\"${cfg("APP_URL")}\"")
+        buildConfigField("String", "FCM_PROJECT_ID", "\"${cfg("FCM_PROJECT_ID")}\"")
+        buildConfigField("String", "FCM_API_KEY", "\"${cfg("FCM_API_KEY")}\"")
+        buildConfigField("String", "FCM_APP_ID", "\"${cfg("FCM_APP_ID")}\"")
+        buildConfigField("String", "FCM_SENDER_ID", "\"${cfg("FCM_SENDER_ID")}\"")
+
+        // Use only a Maps-enabled key. Falling back to the Firebase Web API key can
+        // build successfully but still render a blank Google map at runtime.
+        val mapsApiKey = System.getenv("MASHWARAK_MAPS_API_KEY")?.trim().orEmpty().ifBlank {
+            (cfg.getProperty("GOOGLE_MAPS_API_KEY") ?: "").trim()
+        }
+        val finalMapsApiKey = mapsApiKey.ifBlank { "MISSING_MAPS_API_KEY" }
+        manifestPlaceholders["MAPS_API_KEY"] = finalMapsApiKey
+        // Reuse the same Android-restricted key for Places API (New).
+        // The key is injected by GitHub Actions and is never committed to source.
+        buildConfigField("String", "MAPS_API_KEY", "\"${finalMapsApiKey}\"")
+    }
+
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("direct") {
+            dimension = "distribution"
+            buildConfigField("boolean", "DIRECT_UPDATES", "true")
+        }
+        create("play") {
+            dimension = "distribution"
+            buildConfigField("boolean", "DIRECT_UPDATES", "false")
+        }
+    }
+
+    buildFeatures { buildConfig = true }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = "17" }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.activity:activity-ktx:1.10.0")
+    implementation("androidx.webkit:webkit:1.12.1")
+    implementation("androidx.camera:camera-core:1.4.1")
+    implementation("androidx.camera:camera-camera2:1.4.1")
+    implementation("androidx.camera:camera-lifecycle:1.4.1")
+    implementation("androidx.camera:camera-view:1.4.1")
+    implementation("com.google.firebase:firebase-messaging:24.1.0")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("com.google.android.gms:play-services-maps:20.0.0")
+    implementation("com.google.android.libraries.places:places:5.1.1")
+}
