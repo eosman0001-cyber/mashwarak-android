@@ -34,6 +34,9 @@ import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
@@ -68,6 +71,28 @@ class MainActivity : AppCompatActivity() {
     private lateinit var splash: FrameLayout
     private lateinit var root: FrameLayout
     private lateinit var helpButton: TextView
+
+    // V229 — native offline/error layer. The live WebView remains intact underneath,
+    // so a transient connection loss does not erase an unfinished booking form.
+    private lateinit var offlineScreen: FrameLayout
+    private lateinit var offlineTitle: TextView
+    private lateinit var offlineDescription: TextView
+    private lateinit var offlineRetry: TextView
+    private var webLoadStarted = false
+    private var webLoadFailed = false
+    private var offlineScreenVisible = false
+    private var networkObserverRegistered = false
+    private var lastObservedOnline: Boolean? = null
+    // showSplash() clears lifecycleHandler callbacks; network events need their own handler.
+    private val networkUiHandler = Handler(Looper.getMainLooper())
+    private val connectivity by lazy { getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager }
+    private val connectivityObserver = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) { networkUiHandler.post { refreshOfflineConnectivity() } }
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            networkUiHandler.post { refreshOfflineConnectivity() }
+        }
+        override fun onLost(network: Network) { networkUiHandler.post { refreshOfflineConnectivity() } }
+    }
 
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private var requestedCameraFacing: String = "rear"
@@ -291,6 +316,11 @@ class MainActivity : AppCompatActivity() {
             )
         )
 
+        // Always above the WebView and splash. No server HTML is needed to draw it.
+        offlineScreen = buildNativeOfflineScreen()
+        root.addView(offlineScreen, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+        ))
         setContentView(root)
 
         if (BuildConfig.DIRECT_UPDATES) ContextCompat.registerReceiver(
@@ -405,14 +435,29 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: android.webkit.WebResourceError?) {
+                // WebView calls this for pictures, scripts and nested frames too.
+                // A single Google Maps tile failing must NOT replace the booking screen.
                 if (request?.isForMainFrame == true) {
-                    hideSplash()
-                    Toast.makeText(this@MainActivity, "تعذر الاتصال. استخدم مساعدة ثم تحديث الصفحة للمحاولة مجددًا.", Toast.LENGTH_LONG).show()
+                    webLoadFailed = true
+                    showNativeOfflineScreen(!isInternetAvailable())
+                } else if (!isInternetAvailable()) {
+                    showNativeOfflineScreen(true)
+                }
+            }
+
+            override fun onReceivedHttpError(view: WebView?, request: WebResourceRequest?, errorResponse: WebResourceResponse?) {
+                if (request?.isForMainFrame == true && (errorResponse?.statusCode ?: 0) >= 400) {
+                    webLoadFailed = true
+                    showNativeOfflineScreen(false)
                 }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 progress.visibility = View.GONE
+                if (webLoadFailed || !isInternetAvailable()) {
+                    if (!isInternetAvailable()) showNativeOfflineScreen(true)
+                    return
+                }
 
                 updateHelpButtonPositionFromPage()
 
@@ -513,8 +558,13 @@ class MainActivity : AppCompatActivity() {
                 Toast.LENGTH_LONG
             ).show()
         } else {
-            showSplash()
-            webView.loadUrl(BuildConfig.APP_URL)
+            // Offline startup: never load a remote page just to show its raw browser error.
+            startNativeNetworkObserver()
+            if (isInternetAvailable()) {
+                loadMashwarakFromNative()
+            } else {
+                showNativeOfflineScreen(true)
+            }
         }
 
         setupNotifications()
@@ -540,6 +590,10 @@ class MainActivity : AppCompatActivity() {
      * tree and wait briefly for the page to acknowledge whether it handled Back.
      */
     private fun handleMashwarakNativeBack() {
+        if (offlineScreenVisible) {
+            moveTaskToBack(true) // Never navigate to a WebView browser error page.
+            return
+        }
         if (!::webView.isInitialized || nativeBackRequestInFlight) return
         nativeBackRequestInFlight = true
 
@@ -2075,11 +2129,214 @@ class MainActivity : AppCompatActivity() {
         return overlay
     }
 
+    // V229 — connectivity check uses Android's validated network status,
+    // not whether Wi-Fi is merely enabled (a captive portal isn't internet).
+    private fun isInternetAvailable(): Boolean = runCatching {
+        val network = connectivity.activeNetwork ?: return@runCatching false
+        val caps = connectivity.getNetworkCapabilities(network) ?: return@runCatching false
+        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }.getOrDefault(false)
+
+    private fun startNativeNetworkObserver() {
+        if (networkObserverRegistered) return
+        runCatching {
+            connectivity.registerDefaultNetworkCallback(connectivityObserver)
+            networkObserverRegistered = true
+        }
+    }
+
+    private fun refreshOfflineConnectivity() {
+        if (isDestroyed || isFinishing || !::webView.isInitialized || !::offlineScreen.isInitialized) return
+        val isOnline = isInternetAvailable()
+        val wasOnline = lastObservedOnline
+        lastObservedOnline = isOnline
+        if (!isOnline) {
+            showNativeOfflineScreen(true)
+            return
+        }
+        if (!webLoadStarted || (wasOnline == false && !pageShown)) {
+            // Retry at most once per connection-restored event, only before readiness.
+            // Never refresh an active booking automatically.
+            loadMashwarakFromNative()
+        } else if (pageShown && !webLoadFailed) {
+            hideNativeOfflineScreen() // Preserve unsent booking details.
+        } else if (webLoadFailed) {
+            showNativeOfflineScreen(false) // Manual retry when an active navigation failed.
+        }
+    }
+
+    private fun loadMashwarakFromNative() {
+        if (!isInternetAvailable()) {
+            showNativeOfflineScreen(true)
+            return
+        }
+        if (BuildConfig.APP_URL.startsWith("https://")) {
+            webLoadStarted = true
+            webLoadFailed = false
+            showSplash()
+            // Retain the native cover until the app signals readiness.
+            if (offlineScreenVisible) {
+                offlineTitle.text = "جاري استعادة الاتصال"
+                offlineDescription.text = "لحظات، وبنرجعك لمشوارك..."
+                offlineRetry.text = "إعادة المحاولة"
+            }
+            webView.loadUrl(BuildConfig.APP_URL)
+        }
+    }
+
+    private fun showNativeOfflineScreen(noInternet: Boolean) {
+        if (!::offlineScreen.isInitialized || isDestroyed || isFinishing) return
+        offlineScreenVisible = true
+        offlineTitle.text = if (noInternet) "الإنترنت غير متصل" else "تعذر تحميل مشوارك"
+        offlineDescription.text = if (noInternet)
+            "اتأكد من تشغيل البيانات أو الواي فاي. هنحافظ على الشاشة الحالية، ونرجعك للتطبيق أول ما الاتصال يرجع."
+        else
+            "مش قادرين نوصل للخدمة حاليًا. جرّب تاني، ولو المشكلة مستمرة راجع اتصال الإنترنت."
+        offlineRetry.text = "إعادة المحاولة"
+        offlineScreen.visibility = View.VISIBLE
+        offlineScreen.alpha = 1f
+        offlineScreen.bringToFront()
+        progress.visibility = View.GONE
+        // An animated splash must never uncover Chrome's network error page.
+        splash.animate().cancel()
+        splash.visibility = View.GONE
+    }
+
+    private fun hideNativeOfflineScreen() {
+        if (!::offlineScreen.isInitialized) return
+        offlineScreenVisible = false
+        offlineScreen.visibility = View.GONE
+    }
+
+    private fun buildNativeOfflineScreen(): FrameLayout {
+        val burgundy = Color.rgb(116, 33, 63)
+        val cream = Color.rgb(251, 245, 243)
+        val ink = Color.rgb(52, 40, 47)
+        val muted = Color.rgb(122, 108, 115)
+        val cardBg = GradientDrawable().apply {
+            setColor(Color.WHITE)
+            cornerRadius = dp(26).toFloat()
+            setStroke(dp(1), Color.rgb(231, 218, 220))
+        }
+        val overlay = FrameLayout(this).apply {
+            setBackgroundColor(cream)
+            visibility = View.GONE
+            isClickable = true
+            isFocusable = true
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        }
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(26), dp(34), dp(26), dp(32))
+            background = cardBg
+            elevation = dp(5).toFloat()
+        }
+        val iconBadge = object : View(this) {
+            private val mark = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = burgundy
+                strokeWidth = dp(3).toFloat()
+                strokeCap = Paint.Cap.ROUND
+                style = Paint.Style.STROKE
+            }
+            init {
+                background = GradientDrawable().apply {
+                    setColor(Color.rgb(251, 239, 243))
+                    cornerRadius = dp(24).toFloat()
+                }
+            }
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val cx = width / 2f
+                val cy = height / 2f
+                canvas.drawArc(RectF(cx-dp(25),cy-dp(17),cx+dp(25),cy+dp(26)),220f,100f,false,mark)
+                canvas.drawArc(RectF(cx-dp(16),cy-dp(6),cx+dp(16),cy+dp(20)),220f,100f,false,mark)
+                mark.style = Paint.Style.FILL
+                canvas.drawCircle(cx,cy+dp(12),dp(3).toFloat(),mark)
+                mark.style = Paint.Style.STROKE
+                canvas.drawLine(cx-dp(22),cy+dp(23),cx+dp(22),cy-dp(23),mark)
+            }
+        }
+        container.addView(iconBadge, LinearLayout.LayoutParams(dp(82), dp(82)))
+        val brand = TextView(this).apply {
+            text = "مــشــوارك"
+            textSize = 16f
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+            setTextColor(burgundy)
+            gravity = Gravity.CENTER
+        }
+        container.addView(brand, LinearLayout.LayoutParams(-1, dp(36)).apply { topMargin = dp(12) })
+        offlineTitle = TextView(this).apply {
+            text = "الإنترنت غير متصل"
+            textSize = 23f
+            setTextColor(ink)
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+            gravity = Gravity.CENTER
+        }
+        container.addView(offlineTitle, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        offlineDescription = TextView(this).apply {
+            text = "اتأكد من اتصالك بالإنترنت."
+            textSize = 14f
+            setTextColor(muted)
+            gravity = Gravity.CENTER
+            setLineSpacing(dp(3).toFloat(), 1f)
+        }
+        container.addView(offlineDescription, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(13) })
+        offlineRetry = TextView(this).apply {
+            text = "إعادة المحاولة"
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+            background = GradientDrawable().apply {
+                setColor(burgundy)
+                cornerRadius = dp(15).toFloat()
+            }
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                if (!isInternetAvailable()) {
+                    showNativeOfflineScreen(true)
+                } else if (pageShown && !webLoadFailed) {
+                    hideNativeOfflineScreen() // Preserve unsent ride data.
+                } else {
+                    loadMashwarakFromNative()
+                }
+            }
+        }
+        container.addView(offlineRetry, LinearLayout.LayoutParams(-1, dp(53)).apply { topMargin = dp(24) })
+        val settingsButton = TextView(this).apply {
+            text = "إعدادات الإنترنت"
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(burgundy)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                runCatching { startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS)) }
+            }
+        }
+        container.addView(settingsButton, LinearLayout.LayoutParams(-1, dp(44)).apply { topMargin = dp(5) })
+        overlay.addView(container, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.CENTER
+            marginStart = dp(22)
+            marginEnd = dp(22)
+        })
+        return overlay
+    }
+
     private fun showSplash() {
         pageShown = false
         lifecycleHandler.removeCallbacksAndMessages(null)
         lifecycleHandler.postDelayed({
-            if (!pageShown && !isDestroyed) { hideSplash(); Toast.makeText(this, "الاتصال بطيء. انتظر قليلًا أو أعد المحاولة من مساعدة.", Toast.LENGTH_LONG).show() }
+            if (!pageShown && !isDestroyed && !isFinishing) {
+                webLoadFailed = true
+                showNativeOfflineScreen(!isInternetAvailable())
+            }
         }, 25000)
         splash.alpha = 1f
         splash.visibility = View.VISIBLE
@@ -2113,7 +2370,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun revealApp() {
-        if (isDestroyed || isFinishing) return
+        if (isDestroyed || isFinishing || !isInternetAvailable() || webLoadFailed) return
+        hideNativeOfflineScreen()
         pageShown = true
         lifecycleHandler.removeCallbacksAndMessages(null)
         hideSplash()
@@ -2370,6 +2628,10 @@ class MainActivity : AppCompatActivity() {
         (value * resources.displayMetrics.density).toInt()
 
     override fun onDestroy() {
+        if (networkObserverRegistered) {
+            runCatching { connectivity.unregisterNetworkCallback(connectivityObserver) }
+            networkObserverRegistered = false
+        }
         runCatching { unregisterReceiver(updateDownloadReceiver) }
         lifecycleHandler.removeCallbacksAndMessages(null)
         locationGeneration++
