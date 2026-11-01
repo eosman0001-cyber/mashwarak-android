@@ -2161,9 +2161,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** V224.1 — open turn-by-turn directions in the installed Google Maps app.
-     *  Only trusted Apps Script frames can call the associated AndroidX web bridge.
-     *  No WebView navigation to Maps, no new permissions and no GPS tracking.
+    /** V224.2 — open Google Maps app reliably, without sending /maps/dir to a browser.
+     *  Prefer Google's official Android navigation URI. If the app is absent,
+     *  open the official web directions URL with its REQUIRED trailing slash.
+     *  The existing V224.1 native bridge remains unchanged for compatibility.
      */
     private fun mw2241OpenDirections(destination: String) {
         val target = destination.trim()
@@ -2177,24 +2178,30 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "إحداثيات العميل غير صحيحة.", Toast.LENGTH_LONG).show()
             return
         }
-        val mapsUrl = Uri.Builder()
-            .scheme("https").authority("www.google.com")
-            .appendPath("maps").appendPath("dir")
-            .appendQueryParameter("api", "1")
-            .appendQueryParameter("destination", target)
-            .appendQueryParameter("travelmode", "driving")
-            .build()
-        val viewIntent = Intent(Intent.ACTION_VIEW, mapsUrl).apply {
-            addCategory(Intent.CATEGORY_BROWSABLE)
-        }
+
+        // Works directly with an installed Google Maps app. Avoid routing
+        // through Chrome or the embedded Apps Script WebView.
+        val appIntent = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("google.navigation:q=$target&mode=d")
+        ).apply { setPackage("com.google.android.apps.maps") }
         try {
-            startActivity(Intent(viewIntent).setPackage("com.google.android.apps.maps"))
+            startActivity(appIntent)
+            return
         } catch (_: Exception) {
-            try {
-                startActivity(viewIntent) // installed maps alternative or browser
-            } catch (_: Exception) {
-                Toast.makeText(this, "لا يوجد تطبيق يمكنه فتح خرائط Google.", Toast.LENGTH_LONG).show()
-            }
+            // The app might be missing/disabled; fall back to a browser-safe URL.
+        }
+
+        // IMPORTANT: official Maps directions path is /maps/dir/ (trailing slash).
+        // Uri.Builder.appendPath("dir") previously emitted /maps/dir -> HTTP 404.
+        val webUrl = "https://www.google.com/maps/dir/?api=1" +
+            "&destination=" + Uri.encode(target) + "&travelmode=driving"
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(webUrl)).apply {
+                addCategory(Intent.CATEGORY_BROWSABLE)
+            })
+        } catch (_: Exception) {
+            Toast.makeText(this, "تعذر فتح خرائط Google. تأكد من تثبيت التطبيق أو وجود متصفح.", Toast.LENGTH_LONG).show()
         }
     }
 
