@@ -350,6 +350,35 @@ class MainActivity : AppCompatActivity() {
                     ((scheme == "https" || scheme == "http") &&
                         (host == "wa.me" || host == "api.whatsapp.com" ||
                          host == "web.whatsapp.com" || host == "www.whatsapp.com"))
+                // V224: direction links to client/ride destination must open
+                // Google Maps externally, including when navigation originates
+                // from an HtmlService iframe (not only the main WebView frame).
+                // Whitelist ONLY Google Maps direction URLs with GPS coordinates.
+                val mapsDestination = if (scheme == "https")
+                    uri.getQueryParameter("destination").orEmpty() else ""
+                val isMashwarakMapsDirections = scheme == "https" &&
+                    (host == "www.google.com" || host == "google.com") &&
+                    uri.path.orEmpty().trimEnd('/') == "/maps/dir" &&
+                    uri.getQueryParameter("api") == "1" &&
+                    Regex("""^-?\d{1,2}(?:\.\d{1,8})?,-?\d{1,3}(?:\.\d{1,8})?$""").matches(mapsDestination)
+                if (isMashwarakMapsDirections) {
+                    val destinationIntent = Intent(Intent.ACTION_VIEW, uri).apply {
+                        addCategory(Intent.CATEGORY_BROWSABLE)
+                    }
+                    try {
+                        // Prefer the installed Google Maps app, fall back to chooser/browser.
+                        startActivity(Intent(destinationIntent).setPackage("com.google.android.apps.maps"))
+                    } catch (_: Exception) {
+                        try { startActivity(destinationIntent) }
+                        catch (_: Exception) {
+                            Toast.makeText(this@MainActivity,
+                                "تعذر فتح Google Maps. تأكد من تثبيته.",
+                                Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    return true
+                }
+
                 if (externalContactLink) {
                     try {
                         val external = Intent(Intent.ACTION_VIEW, uri).apply {
@@ -2111,6 +2140,60 @@ class MainActivity : AppCompatActivity() {
                     "picker" -> MashwarakLocationBridge().openNativePicker(data.optString("mode"), data.optString("lat"), data.optString("lng"), data.optString("label").take(300))
                     "saveImage" -> MashwarakDownloadBridge().saveBase64Image(data.optString("name"), data.optString("data"))
                 }
+            }
+        }
+        // V224.1 — dedicated bridge; old APKs will not expose this name.
+        // addWebMessageListener injects it only into frames matching trustedFrameOrigins.
+        WebViewCompat.addWebMessageListener(webView, "MashwarakMapsV2241", trustedFrameOrigins) {
+                _, message, origin, _, _ ->
+            if (isDestroyed || isFinishing || !trustedFrameOrigins.contains(origin.toString().trimEnd('/'))) {
+                return@addWebMessageListener
+            }
+            if (message.type != androidx.webkit.WebMessageCompat.TYPE_STRING) return@addWebMessageListener
+            val raw = message.data ?: return@addWebMessageListener
+            if (raw.length > 256) return@addWebMessageListener
+            runCatching {
+                val msg = JSONObject(raw)
+                if (msg.optString("action") == "openDirections") {
+                    mw2241OpenDirections(msg.optString("destination"))
+                }
+            }
+        }
+    }
+
+    /** V224.1 — open turn-by-turn directions in the installed Google Maps app.
+     *  Only trusted Apps Script frames can call the associated AndroidX web bridge.
+     *  No WebView navigation to Maps, no new permissions and no GPS tracking.
+     */
+    private fun mw2241OpenDirections(destination: String) {
+        val target = destination.trim()
+        val match = Regex("""^(-?\d{1,2}(?:\.\d{1,8})?),(-?\d{1,3}(?:\.\d{1,8})?)$""")
+            .matchEntire(target)
+        val lat = match?.groupValues?.get(1)?.toDoubleOrNull()
+        val lng = match?.groupValues?.get(2)?.toDoubleOrNull()
+        if (lat == null || lng == null ||
+            lat < -90.0 || lat > 90.0 || lng < -180.0 || lng > 180.0 ||
+            (lat == 0.0 && lng == 0.0)) {
+            Toast.makeText(this, "إحداثيات العميل غير صحيحة.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val mapsUrl = Uri.Builder()
+            .scheme("https").authority("www.google.com")
+            .appendPath("maps").appendPath("dir")
+            .appendQueryParameter("api", "1")
+            .appendQueryParameter("destination", target)
+            .appendQueryParameter("travelmode", "driving")
+            .build()
+        val viewIntent = Intent(Intent.ACTION_VIEW, mapsUrl).apply {
+            addCategory(Intent.CATEGORY_BROWSABLE)
+        }
+        try {
+            startActivity(Intent(viewIntent).setPackage("com.google.android.apps.maps"))
+        } catch (_: Exception) {
+            try {
+                startActivity(viewIntent) // installed maps alternative or browser
+            } catch (_: Exception) {
+                Toast.makeText(this, "لا يوجد تطبيق يمكنه فتح خرائط Google.", Toast.LENGTH_LONG).show()
             }
         }
     }
