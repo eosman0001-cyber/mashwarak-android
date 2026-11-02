@@ -258,7 +258,7 @@ class OnboardingActivity : ComponentActivity() {
     }
     private fun rounded(color: Int, radius: Float, outline: Int? = null) = GradientDrawable().apply {
         setColor(color)
-        cornerRadius = dp(radius).toFloat()
+        cornerRadius = radius * resources.displayMetrics.density
         if (outline != null) setStroke(dp(1), outline)
     }
     private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
