@@ -278,13 +278,12 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        // The compact native help icon covers the Google Sites badge. Its side
-        // follows the DEVICE language (RTL -> left, LTR -> right), never the
-        // embedded web page direction. A little extra height hides the top edge
-        // of the Sites badge without increasing the icon width.
+        // The native help icon covers the Google Sites badge in the position
+        // observed on real devices: English/LTR -> LEFT, Arabic/RTL -> RIGHT.
+        // Keep its width/color unchanged; extra height exposes the entire avatar.
         helpButton = ImageView(this).apply {
             setImageResource(R.drawable.mashwarak_support_avatar)
-            scaleType = ImageView.ScaleType.CENTER_CROP
+            scaleType = ImageView.ScaleType.FIT_CENTER
             setPadding(0, 0, 0, 0)
             background = null
             isClickable = false
@@ -304,13 +303,13 @@ class MainActivity : AppCompatActivity() {
         }
         helpTouchTarget.addView(
             helpButton,
-            FrameLayout.LayoutParams(dp(46), dp(52)).apply {
+            FrameLayout.LayoutParams(dp(46), dp(66)).apply {
                 gravity = Gravity.CENTER
             }
         )
         root.addView(
             helpTouchTarget,
-            FrameLayout.LayoutParams(dp(48), dp(54)).apply {
+            FrameLayout.LayoutParams(dp(48), dp(68)).apply {
                 gravity = Gravity.BOTTOM or Gravity.LEFT
                 leftMargin = dp(11)
                 bottomMargin = dp(7)
@@ -1207,12 +1206,12 @@ class MainActivity : AppCompatActivity() {
         if (!::helpTouchTarget.isInitialized) return
 
         val lp = (helpTouchTarget.layoutParams as? FrameLayout.LayoutParams)
-            ?: FrameLayout.LayoutParams(dp(48), dp(54))
+            ?: FrameLayout.LayoutParams(dp(48), dp(68))
         lp.width = dp(48)
-        lp.height = dp(54)
-        lp.gravity = Gravity.BOTTOM or (if (isRtl) Gravity.LEFT else Gravity.RIGHT)
-        lp.leftMargin = if (isRtl) dp(11) else 0
-        lp.rightMargin = if (isRtl) 0 else dp(11)
+        lp.height = dp(68)
+        lp.gravity = Gravity.BOTTOM or (if (isRtl) Gravity.RIGHT else Gravity.LEFT)
+        lp.leftMargin = if (isRtl) 0 else dp(11)
+        lp.rightMargin = if (isRtl) dp(11) else 0
         lp.bottomMargin = dp(7)
         helpTouchTarget.layoutParams = lp
         helpTouchTarget.requestLayout()
