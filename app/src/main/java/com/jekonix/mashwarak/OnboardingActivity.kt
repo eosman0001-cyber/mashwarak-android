@@ -93,15 +93,18 @@ class OnboardingActivity : ComponentActivity() {
             insets
         }
 
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        // The logo must be centered against the full device width, not within
+        // the remaining width after the Skip action takes its share.
+        val header = FrameLayout(this).apply {
             setPadding(dp(22), dp(12), dp(22), dp(8))
         }
-        val brandGroup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val brandGroup = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
         brandGroup.addView(label("مشوارك", 25f, wine, true))
         brandGroup.addView(label("MASHWARAK", 10f, gold, true))
-        header.addView(brandGroup, LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(brandGroup, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         skipButton = label("تخطي", 14f, muted, true).apply {
             gravity = Gravity.CENTER
             minWidth = dp(68)
@@ -111,7 +114,8 @@ class OnboardingActivity : ComponentActivity() {
             contentDescription = "تخطي التعريف والبدء"
             setOnClickListener { finishOnboarding() }
         }
-        header.addView(skipButton)
+        header.addView(skipButton, FrameLayout.LayoutParams(-2, -2,
+            Gravity.RIGHT or Gravity.CENTER_VERTICAL))
         root.addView(header)
 
         val scroller = ScrollView(this).apply {

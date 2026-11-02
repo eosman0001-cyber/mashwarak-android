@@ -278,13 +278,12 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        // V236: a tightly-cropped icon, WITHOUT a raised white card or caption.
-        // The flat white UNDERLAY blends into the site's white footer while physically
-        // hiding Google's larger bottom badge; the transparent touch shield covers
-        // its full hit region. Shrinking the underlay would expose the badge.
+        // A compact native help icon sits exactly over the bottom-left Google Sites
+        // badge. Its opaque 48dp background hides the entire underlying badge;
+        // there is no oversized white card or touch layer extending into the page.
         helpButton = ImageView(this).apply {
-            setImageResource(R.drawable.mashwarak_support_agent)
-            scaleType = ImageView.ScaleType.FIT_CENTER
+            setImageResource(R.drawable.mashwarak_support_avatar)
+            scaleType = ImageView.ScaleType.CENTER_CROP
             setPadding(0, 0, 0, 0)
             background = null
             isClickable = false
@@ -295,40 +294,28 @@ class MainActivity : AppCompatActivity() {
             isClickable = true
             isFocusable = true
             contentDescription = "مساعدة مشوارك"
-            elevation = dp(15).toFloat()
+            background = GradientDrawable().apply {
+                setColor(Color.rgb(116, 33, 63))
+                cornerRadius = dp(14).toFloat()
+            }
+            clipToOutline = true
             setOnClickListener { showHelpCenter() }
         }
-        // No white rounded container and NO shadow around the visible icon.
-        // The flat cover is deliberately larger than the icon, but has no border
-        // or rounded outline. It blocks both the visible Sites badge and its taps.
-        val sitesBadgeCover = View(this).apply {
-            setBackgroundColor(Color.WHITE)
-            isClickable = false
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
-        helpTouchTarget.addView(
-            sitesBadgeCover,
-            FrameLayout.LayoutParams(dp(91), dp(108)).apply {
-                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                bottomMargin = 0
-            }
-        )
         helpTouchTarget.addView(
             helpButton,
-            FrameLayout.LayoutParams(dp(62), dp(84)).apply {
-                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                bottomMargin = dp(13)
+            FrameLayout.LayoutParams(dp(46), dp(46)).apply {
+                gravity = Gravity.CENTER
             }
         )
         root.addView(
             helpTouchTarget,
-            FrameLayout.LayoutParams(dp(112), dp(125)).apply {
+            FrameLayout.LayoutParams(dp(48), dp(48)).apply {
                 gravity = Gravity.BOTTOM or Gravity.LEFT
-                leftMargin = 0
-                bottomMargin = 0
+                leftMargin = dp(11)
+                bottomMargin = dp(7)
             }
         )
-        // The complete shield, not only the visual label, must change sides.
+        // Keep the icon locked over the physical badge, regardless of RTL/LTR.
         updateHelpButtonPositionFromDevice()
 
         splash = buildSplash()
@@ -1203,62 +1190,26 @@ class MainActivity : AppCompatActivity() {
      * was opened from a push notification.
      */
     private fun updateHelpButtonPositionFromDevice() {
-        val isRtl = resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
-        positionHelpButton(isRtl)
+        positionHelpButton()
     }
 
     private fun updateHelpButtonPositionFromPage() {
-        if (!::webView.isInitialized) {
-            updateHelpButtonPositionFromDevice()
-            return
-        }
-
-        val js = """
-            (function() {
-              try {
-                var d = (document.documentElement && document.documentElement.dir) || '';
-                var b = (document.body && document.body.dir) || '';
-                var c = '';
-                if (document.body && window.getComputedStyle) {
-                  c = window.getComputedStyle(document.body).direction || '';
-                }
-                var lang = (document.documentElement && document.documentElement.lang) || navigator.language || '';
-                var raw = (d || b || c || '').toLowerCase();
-                if (raw === 'rtl') return 'rtl';
-                if (raw === 'ltr') return 'ltr';
-                return /^(ar|he|fa|ur)(-|$)/i.test(lang) ? 'rtl' : 'ltr';
-              } catch (e) {
-                return '';
-              }
-            })();
-        """.trimIndent()
-
-        webView.evaluateJavascript(js) { result ->
-            val dir = result?.replace("\"", "")?.trim()?.lowercase()
-            when (dir) {
-                "rtl" -> positionHelpButton(true)
-                "ltr" -> positionHelpButton(false)
-                else -> updateHelpButtonPositionFromDevice()
-            }
-        }
+        // Page direction is unrelated to the Google Sites badge side.
+        // Never move the cover to the opposite corner after page load.
+        positionHelpButton()
     }
 
-    private fun positionHelpButton(isRtl: Boolean) {
+    private fun positionHelpButton() {
         if (!::helpTouchTarget.isInitialized) return
 
         val lp = (helpTouchTarget.layoutParams as? FrameLayout.LayoutParams)
-            ?: FrameLayout.LayoutParams(dp(112), dp(125))
-        lp.width = dp(112)
-        lp.height = dp(125)
-        // Absolute LEFT / RIGHT: Gravity.START/END can switch meanings when
-        // the OS and the Google Sites page have different RTL directions.
-        // The entire cover+touch target moves together with the visible icon.
-        lp.gravity = Gravity.BOTTOM or (if (isRtl) Gravity.LEFT else Gravity.RIGHT)
-        lp.leftMargin = 0
+            ?: FrameLayout.LayoutParams(dp(48), dp(48))
+        lp.width = dp(48)
+        lp.height = dp(48)
+        lp.gravity = Gravity.BOTTOM or Gravity.LEFT
+        lp.leftMargin = dp(11)
         lp.rightMargin = 0
-        lp.marginStart = 0
-        lp.marginEnd = 0
-        lp.bottomMargin = 0
+        lp.bottomMargin = dp(7)
         helpTouchTarget.layoutParams = lp
         helpTouchTarget.requestLayout()
     }
