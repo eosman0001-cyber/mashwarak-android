@@ -30,6 +30,9 @@ import java.util.Locale
 import org.json.JSONObject
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
