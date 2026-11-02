@@ -74,6 +74,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var splash: FrameLayout
     private lateinit var root: FrameLayout
     private lateinit var helpButton: TextView
+    private lateinit var helpTouchTarget: FrameLayout
 
     // V229 — native offline/error layer. The live WebView remains intact underneath,
     // so a transient connection loss does not erase an unfinished booking form.
@@ -277,40 +278,48 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        // Native help button:
-        // covers the Google Sites info/exclamation control without giving
-        // a dangerous one-tap refresh action.
-        // V229.2: slightly wider and less tall, while remaining over
-        // the underlying Google Sites control.
+        // V234: the Google Sites corner badge must not be visible OR tappable.
+        // Draw a branded support agent, with a larger hit/shield surface that
+        // intercepts taps around every edge of the underlying Sites control.
         helpButton = TextView(this).apply {
             text = "مساعدة"
-            textSize = 9.5f
-            setTextColor(Color.rgb(143, 23, 52))
+            textSize = 10f
+            setTextColor(Color.rgb(116, 33, 63))
             gravity = Gravity.CENTER
             setTypeface(Typeface.DEFAULT, Typeface.BOLD)
             setBackgroundResource(R.drawable.refresh_button_bg)
-            elevation = dp(10).toFloat()
-            contentDescription = "مساعدة"
+            val avatar = ContextCompat.getDrawable(this@MainActivity, R.drawable.mashwarak_support_agent)
+            avatar?.setBounds(0, 0, dp(62), dp(62))
+            setCompoundDrawables(null, avatar, null, null)
+            compoundDrawablePadding = dp(-3)
+            setPadding(dp(3), dp(3), dp(3), dp(2))
+            isClickable = false // All touch handling belongs to the outer protective hit area.
+            isFocusable = false
+            contentDescription = ""
+        }
+        helpTouchTarget = FrameLayout(this).apply {
             isClickable = true
             isFocusable = true
-            setPadding(dp(2), 0, dp(2), 0)
-            setOnClickListener {
-                showHelpCenter()
-            }
+            contentDescription = "مساعدة مشوارك"
+            elevation = dp(15).toFloat()
+            setOnClickListener { showHelpCenter() }
         }
-
-        root.addView(
+        helpTouchTarget.addView(
             helpButton,
-            FrameLayout.LayoutParams(dp(58), dp(46)).apply {
-                gravity = Gravity.BOTTOM or Gravity.START
-                marginStart = dp(14)
-                bottomMargin = dp(20)
+            FrameLayout.LayoutParams(dp(88), dp(96)).apply {
+                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                bottomMargin = dp(9)
             }
         )
-
-        // Set an initial side immediately from the Android layout direction.
-        // After Google Sites finishes loading, the page direction is checked
-        // again and this button is moved if needed.
+        root.addView(
+            helpTouchTarget,
+            FrameLayout.LayoutParams(dp(112), dp(125)).apply {
+                gravity = Gravity.BOTTOM or Gravity.START
+                marginStart = dp(1)
+                bottomMargin = 0
+            }
+        )
+        // The complete shield, not only the visual label, must change sides.
         updateHelpButtonPositionFromDevice()
 
         splash = buildSplash()
@@ -1226,28 +1235,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun positionHelpButton(isRtl: Boolean) {
-        if (!::helpButton.isInitialized) return
+        if (!::helpTouchTarget.isInitialized) return
 
-        val lp = (helpButton.layoutParams as? FrameLayout.LayoutParams)
-            ?: FrameLayout.LayoutParams(dp(58), dp(46))
-
-        lp.width = dp(58)
-        lp.height = dp(46)
+        val lp = (helpTouchTarget.layoutParams as? FrameLayout.LayoutParams)
+            ?: FrameLayout.LayoutParams(dp(112), dp(125))
+        lp.width = dp(112)
+        lp.height = dp(125)
         lp.gravity = Gravity.BOTTOM or if (isRtl) Gravity.END else Gravity.START
-        lp.bottomMargin = dp(20)
-
+        lp.bottomMargin = 0
         if (isRtl) {
-            lp.marginEnd = dp(14)
+            lp.marginEnd = dp(1)
             lp.marginStart = 0
         } else {
-            lp.marginStart = dp(14)
+            lp.marginStart = dp(1)
             lp.marginEnd = 0
         }
-
-        helpButton.layoutParams = lp
-        helpButton.requestLayout()
+        helpTouchTarget.layoutParams = lp
+        helpTouchTarget.requestLayout()
     }
-
 
     private fun showHelpCenter() {
         val dialog = android.app.Dialog(this)
