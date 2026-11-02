@@ -278,9 +278,10 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        // A compact native help icon sits exactly over the bottom-left Google Sites
-        // badge. Its opaque 48dp background hides the entire underlying badge;
-        // there is no oversized white card or touch layer extending into the page.
+        // The compact native help icon covers the Google Sites badge. Its side
+        // follows the DEVICE language (RTL -> left, LTR -> right), never the
+        // embedded web page direction. A little extra height hides the top edge
+        // of the Sites badge without increasing the icon width.
         helpButton = ImageView(this).apply {
             setImageResource(R.drawable.mashwarak_support_avatar)
             scaleType = ImageView.ScaleType.CENTER_CROP
@@ -303,19 +304,19 @@ class MainActivity : AppCompatActivity() {
         }
         helpTouchTarget.addView(
             helpButton,
-            FrameLayout.LayoutParams(dp(46), dp(46)).apply {
+            FrameLayout.LayoutParams(dp(46), dp(52)).apply {
                 gravity = Gravity.CENTER
             }
         )
         root.addView(
             helpTouchTarget,
-            FrameLayout.LayoutParams(dp(48), dp(48)).apply {
+            FrameLayout.LayoutParams(dp(48), dp(54)).apply {
                 gravity = Gravity.BOTTOM or Gravity.LEFT
                 leftMargin = dp(11)
                 bottomMargin = dp(7)
             }
         )
-        // Keep the icon locked over the physical badge, regardless of RTL/LTR.
+        // Set the physical side from the Android device language at launch.
         updateHelpButtonPositionFromDevice()
 
         splash = buildSplash()
@@ -1190,25 +1191,28 @@ class MainActivity : AppCompatActivity() {
      * was opened from a push notification.
      */
     private fun updateHelpButtonPositionFromDevice() {
-        positionHelpButton()
+        val deviceLocale = resources.configuration.locales[0]
+        val isRtl = android.text.TextUtils.getLayoutDirectionFromLocale(deviceLocale) ==
+            View.LAYOUT_DIRECTION_RTL
+        positionHelpButton(isRtl)
     }
 
     private fun updateHelpButtonPositionFromPage() {
-        // Page direction is unrelated to the Google Sites badge side.
-        // Never move the cover to the opposite corner after page load.
-        positionHelpButton()
+        // Page direction is unrelated to the device language: keep the same
+        // side after WebView navigation and page reloads.
+        updateHelpButtonPositionFromDevice()
     }
 
-    private fun positionHelpButton() {
+    private fun positionHelpButton(isRtl: Boolean) {
         if (!::helpTouchTarget.isInitialized) return
 
         val lp = (helpTouchTarget.layoutParams as? FrameLayout.LayoutParams)
-            ?: FrameLayout.LayoutParams(dp(48), dp(48))
+            ?: FrameLayout.LayoutParams(dp(48), dp(54))
         lp.width = dp(48)
-        lp.height = dp(48)
-        lp.gravity = Gravity.BOTTOM or Gravity.LEFT
-        lp.leftMargin = dp(11)
-        lp.rightMargin = 0
+        lp.height = dp(54)
+        lp.gravity = Gravity.BOTTOM or (if (isRtl) Gravity.LEFT else Gravity.RIGHT)
+        lp.leftMargin = if (isRtl) dp(11) else 0
+        lp.rightMargin = if (isRtl) 0 else dp(11)
         lp.bottomMargin = dp(7)
         helpTouchTarget.layoutParams = lp
         helpTouchTarget.requestLayout()
