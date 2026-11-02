@@ -73,7 +73,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var progress: ProgressBar
     private lateinit var splash: FrameLayout
     private lateinit var root: FrameLayout
-    private lateinit var helpButton: TextView
+    private lateinit var helpButton: ImageView
     private lateinit var helpTouchTarget: FrameLayout
 
     // V229 — native offline/error layer. The live WebView remains intact underneath,
@@ -278,17 +278,15 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        // V235: compact icon-only native Help button. A much larger transparent
-        // touch shield still intercepts taps on Google's underlying Sites badge.
-        // Keep the opaque mask independent of the visible avatar size.
-        helpButton = TextView(this).apply {
-            text = ""   // Deliberately icon-only; do not reintroduce a help label.
-            gravity = Gravity.CENTER
-            setBackgroundResource(R.drawable.refresh_button_bg)
-            val avatar = ContextCompat.getDrawable(this@MainActivity, R.drawable.mashwarak_support_agent)
-            avatar?.setBounds(0, 0, dp(46), dp(46))
-            setCompoundDrawables(null, avatar, null, null)
-            setPadding(dp(3), dp(3), dp(3), dp(3))
+        // V236: a tightly-cropped icon, WITHOUT a raised white card or caption.
+        // The flat white UNDERLAY blends into the site's white footer while physically
+        // hiding Google's larger bottom badge; the transparent touch shield covers
+        // its full hit region. Shrinking the underlay would expose the badge.
+        helpButton = ImageView(this).apply {
+            setImageResource(R.drawable.mashwarak_support_agent)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(0, 0, 0, 0)
+            background = null
             isClickable = false
             isFocusable = false
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
@@ -300,31 +298,33 @@ class MainActivity : AppCompatActivity() {
             elevation = dp(15).toFloat()
             setOnClickListener { showHelpCenter() }
         }
-        // White mask hides the Sites badge; the entire 112×125dp shield catches
-        // taps even in the area that remains visually transparent.
-        val helpBadgeMask = View(this).apply {
-            background = roundedBackground(Color.WHITE, 20f)
+        // No white rounded container and NO shadow around the visible icon.
+        // The flat cover is deliberately larger than the icon, but has no border
+        // or rounded outline. It blocks both the visible Sites badge and its taps.
+        val sitesBadgeCover = View(this).apply {
+            setBackgroundColor(Color.WHITE)
+            isClickable = false
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         helpTouchTarget.addView(
-            helpBadgeMask,
-            FrameLayout.LayoutParams(dp(82), dp(94)).apply {
+            sitesBadgeCover,
+            FrameLayout.LayoutParams(dp(91), dp(108)).apply {
                 gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                bottomMargin = dp(3)
+                bottomMargin = 0
             }
         )
         helpTouchTarget.addView(
             helpButton,
-            FrameLayout.LayoutParams(dp(56), dp(56)).apply {
+            FrameLayout.LayoutParams(dp(62), dp(84)).apply {
                 gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                bottomMargin = dp(22)
+                bottomMargin = dp(13)
             }
         )
         root.addView(
             helpTouchTarget,
             FrameLayout.LayoutParams(dp(112), dp(125)).apply {
-                gravity = Gravity.BOTTOM or Gravity.START
-                marginStart = dp(1)
+                gravity = Gravity.BOTTOM or Gravity.LEFT
+                leftMargin = 0
                 bottomMargin = 0
             }
         )
@@ -1250,15 +1250,15 @@ class MainActivity : AppCompatActivity() {
             ?: FrameLayout.LayoutParams(dp(112), dp(125))
         lp.width = dp(112)
         lp.height = dp(125)
-        lp.gravity = Gravity.BOTTOM or if (isRtl) Gravity.END else Gravity.START
+        // Absolute LEFT / RIGHT: Gravity.START/END can switch meanings when
+        // the OS and the Google Sites page have different RTL directions.
+        // The entire cover+touch target moves together with the visible icon.
+        lp.gravity = Gravity.BOTTOM or (if (isRtl) Gravity.LEFT else Gravity.RIGHT)
+        lp.leftMargin = 0
+        lp.rightMargin = 0
+        lp.marginStart = 0
+        lp.marginEnd = 0
         lp.bottomMargin = 0
-        if (isRtl) {
-            lp.marginEnd = dp(1)
-            lp.marginStart = 0
-        } else {
-            lp.marginStart = dp(1)
-            lp.marginEnd = 0
-        }
         helpTouchTarget.layoutParams = lp
         helpTouchTarget.requestLayout()
     }
