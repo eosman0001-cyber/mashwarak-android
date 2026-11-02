@@ -304,7 +304,7 @@ class MainActivity : AppCompatActivity() {
             FrameLayout.LayoutParams(dp(58), dp(46)).apply {
                 gravity = Gravity.BOTTOM or Gravity.START
                 marginStart = dp(14)
-                bottomMargin = dp(8)
+                bottomMargin = dp(20)
             }
         )
 
@@ -1234,7 +1234,7 @@ class MainActivity : AppCompatActivity() {
         lp.width = dp(58)
         lp.height = dp(46)
         lp.gravity = Gravity.BOTTOM or if (isRtl) Gravity.END else Gravity.START
-        lp.bottomMargin = dp(8)
+        lp.bottomMargin = dp(20)
 
         if (isRtl) {
             lp.marginEnd = dp(14)
