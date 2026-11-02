@@ -84,6 +84,9 @@ class MainActivity : AppCompatActivity() {
     private var webLoadStarted = false
     private var webLoadFailed = false
     private var offlineScreenVisible = false
+    // V230: the WebView renderer can be reclaimed when Android backgrounds the app.
+    private var webRendererGone = false
+    private var activityInForeground = false
     private var networkObserverRegistered = false
     private var lastObservedOnline: Boolean? = null
     // showSplash() clears lifecycleHandler callbacks; network events need their own handler.
@@ -277,8 +280,8 @@ class MainActivity : AppCompatActivity() {
         // Native help button:
         // covers the Google Sites info/exclamation control without giving
         // a dangerous one-tap refresh action.
-        // Width stays the same; height is slightly increased to fully cover
-        // the underlying Google control.
+        // V229.2: slightly wider and less tall, while remaining over
+        // the underlying Google Sites control.
         helpButton = TextView(this).apply {
             text = "مساعدة"
             textSize = 9.5f
@@ -298,7 +301,7 @@ class MainActivity : AppCompatActivity() {
 
         root.addView(
             helpButton,
-            FrameLayout.LayoutParams(dp(50), dp(58)).apply {
+            FrameLayout.LayoutParams(dp(58), dp(46)).apply {
                 gravity = Gravity.BOTTOM or Gravity.START
                 marginStart = dp(14)
                 bottomMargin = dp(8)
@@ -453,6 +456,28 @@ class MainActivity : AppCompatActivity() {
                     webLoadFailed = true
                     showNativeOfflineScreen(false)
                 }
+            }
+
+            // V230: a killed WebView renderer cannot be reused. Treat it as a recoverable
+            // state, then create a fresh Activity/WebView on the next foreground entry.
+            override fun onRenderProcessGone(
+                view: WebView?,
+                detail: RenderProcessGoneDetail?
+            ): Boolean {
+                if (view == null || view !== webView) return true
+                webRendererGone = true
+                webLoadFailed = true
+                pageShown = false
+                lifecycleHandler.removeCallbacksAndMessages(null)
+                runCatching { (view.parent as? android.view.ViewGroup)?.removeView(view) }
+                runCatching { view.destroy() }
+                showNativeOfflineScreen(false)
+                if (activityInForeground) {
+                    root.post {
+                        if (webRendererGone && !isFinishing && !isDestroyed) recreate()
+                    }
+                }
+                return true
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
@@ -1204,10 +1229,10 @@ class MainActivity : AppCompatActivity() {
         if (!::helpButton.isInitialized) return
 
         val lp = (helpButton.layoutParams as? FrameLayout.LayoutParams)
-            ?: FrameLayout.LayoutParams(dp(50), dp(58))
+            ?: FrameLayout.LayoutParams(dp(58), dp(46))
 
-        lp.width = dp(50)
-        lp.height = dp(58)
+        lp.width = dp(58)
+        lp.height = dp(46)
         lp.gravity = Gravity.BOTTOM or if (isRtl) Gravity.END else Gravity.START
         lp.bottomMargin = dp(8)
 
@@ -1861,11 +1886,27 @@ class MainActivity : AppCompatActivity() {
             ?.let { requestInstallUpdate(it) }
     }
 
+    override fun onPause() {
+        activityInForeground = false
+        if (::webView.isInitialized && !webRendererGone) {
+            runCatching { webView.onPause() }
+        }
+        super.onPause()
+    }
+
     override fun onResume() {
         super.onResume()
+        activityInForeground = true
+        if (webRendererGone) {
+            // Never call loadUrl/reload on the destroyed WebView. The Apps Script
+            // receipt recovery restores only a previously confirmed request.
+            recreate()
+            return
+        }
         if (::webView.isInitialized) {
+            runCatching { webView.onResume() }
             Handler(Looper.getMainLooper()).postDelayed({
-                checkPendingUpdateInstallOnResume()
+                if (!isFinishing && !isDestroyed) checkPendingUpdateInstallOnResume()
             }, 300)
         }
     }
@@ -2642,7 +2683,8 @@ class MainActivity : AppCompatActivity() {
         fileCallback?.onReceiveValue(null)
         fileCallback = null
         updateExecutor.shutdownNow()
-        if (::webView.isInitialized) webView.destroy()
+        // Renderer-loss callback has already detached and destroyed this instance.
+        if (::webView.isInitialized && !webRendererGone) webView.destroy()
         super.onDestroy()
     }
 
