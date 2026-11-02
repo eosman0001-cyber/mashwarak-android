@@ -278,24 +278,20 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        // V234: the Google Sites corner badge must not be visible OR tappable.
-        // Draw a branded support agent, with a larger hit/shield surface that
-        // intercepts taps around every edge of the underlying Sites control.
+        // V235: compact icon-only native Help button. A much larger transparent
+        // touch shield still intercepts taps on Google's underlying Sites badge.
+        // Keep the opaque mask independent of the visible avatar size.
         helpButton = TextView(this).apply {
-            text = "مساعدة"
-            textSize = 10f
-            setTextColor(Color.rgb(116, 33, 63))
+            text = ""   // Deliberately icon-only; do not reintroduce a help label.
             gravity = Gravity.CENTER
-            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
             setBackgroundResource(R.drawable.refresh_button_bg)
             val avatar = ContextCompat.getDrawable(this@MainActivity, R.drawable.mashwarak_support_agent)
-            avatar?.setBounds(0, 0, dp(62), dp(62))
+            avatar?.setBounds(0, 0, dp(46), dp(46))
             setCompoundDrawables(null, avatar, null, null)
-            compoundDrawablePadding = dp(-3)
-            setPadding(dp(3), dp(3), dp(3), dp(2))
-            isClickable = false // All touch handling belongs to the outer protective hit area.
+            setPadding(dp(3), dp(3), dp(3), dp(3))
+            isClickable = false
             isFocusable = false
-            contentDescription = ""
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         helpTouchTarget = FrameLayout(this).apply {
             isClickable = true
@@ -304,11 +300,24 @@ class MainActivity : AppCompatActivity() {
             elevation = dp(15).toFloat()
             setOnClickListener { showHelpCenter() }
         }
+        // White mask hides the Sites badge; the entire 112×125dp shield catches
+        // taps even in the area that remains visually transparent.
+        val helpBadgeMask = View(this).apply {
+            background = roundedBackground(Color.WHITE, 20f)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        helpTouchTarget.addView(
+            helpBadgeMask,
+            FrameLayout.LayoutParams(dp(82), dp(94)).apply {
+                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                bottomMargin = dp(3)
+            }
+        )
         helpTouchTarget.addView(
             helpButton,
-            FrameLayout.LayoutParams(dp(88), dp(96)).apply {
+            FrameLayout.LayoutParams(dp(56), dp(56)).apply {
                 gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                bottomMargin = dp(9)
+                bottomMargin = dp(22)
             }
         )
         root.addView(
@@ -1310,8 +1319,8 @@ class MainActivity : AppCompatActivity() {
 
         sheet.addView(
             makeHelpOption(
-                "الشاشات التعريفية",
-                "شاهد صفحات التعريف الأربع مرة أخرى"
+                "عن مشوارك",
+                "مشاوير مخططة وطرق طلب الرحلة والانضمام ككابتن"
             ) {
                 dialog.dismiss()
                 startActivity(Intent(this, OnboardingActivity::class.java).apply {
@@ -1600,7 +1609,7 @@ class MainActivity : AppCompatActivity() {
                 updatePrefs.edit()
                     .putString(PREF_AVAILABLE_VERSION, info.versionName)
                     .apply()
-                helpButton.text = "مساعدة ↑"
+                helpButton.contentDescription = "مساعدة مشوارك، تحديث متاح"
 
                 val notes = info.releaseNotes.trim().take(420)
                 status.text = buildString {
@@ -1616,7 +1625,7 @@ class MainActivity : AppCompatActivity() {
                 updatePrefs.edit()
                     .remove(PREF_AVAILABLE_VERSION)
                     .apply()
-                helpButton.text = "مساعدة"
+                helpButton.contentDescription = "مساعدة مشوارك"
                 status.text = "✓ أنت تستخدم أحدث إصدار من مشوارك (${BuildConfig.VERSION_NAME})."
                 downloadButton.visibility = View.GONE
             }
@@ -1851,10 +1860,10 @@ class MainActivity : AppCompatActivity() {
                     updatePrefs.edit()
                         .putString(PREF_AVAILABLE_VERSION, info.versionName)
                         .apply()
-                    if (::helpButton.isInitialized) helpButton.text = "مساعدة ↑"
+                    if (::helpButton.isInitialized) helpButton.contentDescription = "مساعدة مشوارك، تحديث متاح"
                 } else {
                     updatePrefs.edit().remove(PREF_AVAILABLE_VERSION).apply()
-                    if (::helpButton.isInitialized) helpButton.text = "مساعدة"
+                    if (::helpButton.isInitialized) helpButton.contentDescription = "مساعدة مشوارك"
                 }
             }
         }
@@ -1864,7 +1873,8 @@ class MainActivity : AppCompatActivity() {
         if (!BuildConfig.DIRECT_UPDATES) return
         val latest = updatePrefs.getString(PREF_AVAILABLE_VERSION, "").orEmpty()
         if (::helpButton.isInitialized) {
-            helpButton.text = if (isVersionNewer(latest, BuildConfig.VERSION_NAME)) "مساعدة ↑" else "مساعدة"
+            helpButton.contentDescription = if (isVersionNewer(latest, BuildConfig.VERSION_NAME))
+                "مساعدة مشوارك، تحديث متاح" else "مساعدة مشوارك"
         }
     }
 

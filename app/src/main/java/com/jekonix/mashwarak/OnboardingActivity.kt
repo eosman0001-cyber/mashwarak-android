@@ -1,247 +1,208 @@
 package com.jekonix.mashwarak
 
-import androidx.activity.OnBackPressedCallback
-import androidx.activity.ComponentActivity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import kotlin.math.abs
 
 /**
- * V1.13.11: Native onboarding with 4 locally bundled illustrated app previews.
- * Shows once per version-2 intro on normal launch, never uses network or GPS.
+ * V235: lightweight, entirely native single-screen introduction.
+ * No remote images, old screenshots, timers, or network requests.
+ * Seen once at normal launcher startup; available again from native Help.
  */
 class OnboardingActivity : ComponentActivity() {
     companion object {
         const val EXTRA_REVIEW = "mashwarak_onboarding_review"
         const val PREFS = "mashwarak_onboarding"
-        const val KEY_COMPLETED = "completed_v2"
+        // V3: let existing customers see the new introduction exactly once.
+        const val KEY_COMPLETED = "completed_v3"
     }
 
-    private val maroon = Color.rgb(105, 24, 49)
-    private val charcoal = Color.rgb(36, 39, 46)
-    private val grey = Color.rgb(112, 113, 121)
-    private var step = 0
+    private val burgundy = Color.rgb(116, 33, 63)
+    private val dark = Color.rgb(41, 35, 43)
+    private val muted = Color.rgb(112, 103, 110)
+    private val cream = Color.rgb(252, 248, 244)
+    private val gold = Color.rgb(199, 160, 106)
+    private val border = Color.rgb(233, 219, 222)
     private var reviewMode = false
-    private var swipeStartX = 0f
-    private var swipeStartY = 0f
-    private lateinit var drawing: ImageView
-    private lateinit var heading: TextView
-    private lateinit var description: TextView
-    private lateinit var next: TextView
-    private lateinit var skip: TextView
-    private lateinit var dots: LinearLayout
-
-    private val content = listOf(
-        Pair("اطلب مشوارك بسهولة", "من مكانك لوجهتك في خطوات واضحة وسريعة."),
-        Pair("حدد رحلتك بدقة", "اختار نقطة الانطلاق والوجهة والموعد المناسب بسهولة."),
-        Pair("متابعة واضحة لطلبك", "راجع تفاصيل المشوار قبل إرسال الطلب، وخليك مطمئن."),
-        Pair("انضم إلى كباتن مشوارك", "سجّل بياناتك وسيارتك مجانًا للانضمام إلى شبكتنا.")
-    )
-    private val onboardingImages = intArrayOf(
-        R.drawable.onboarding_ride,
-        R.drawable.onboarding_route,
-        R.drawable.onboarding_confirm,
-        R.drawable.onboarding_captain
-    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() { finish() }
-        })
         reviewMode = intent.getBooleanExtra(EXTRA_REVIEW, false)
-        step = savedInstanceState?.getInt("onboarding_step")?.coerceIn(0, 3) ?: 0
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() { finishOnboarding() }
+        })
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = Color.WHITE
         window.navigationBarColor = Color.WHITE
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
             layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setBackgroundColor(Color.WHITE)
         }
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
-            val system = insets.getInsets(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
-            view.setPadding(0, system.top, 0, system.bottom)
+            val bars = insets.getInsets(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+            view.setPadding(0, bars.top, 0, bars.bottom)
             insets
         }
 
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-            setPadding(dp(24), dp(12), dp(24), dp(8))
+            setPadding(dp(22), dp(14), dp(22), dp(8))
         }
-        val brand = label("مشوارك", 19f, maroon, true).apply { gravity = Gravity.RIGHT or Gravity.CENTER_VERTICAL }
-        brand.minHeight = dp(44)
-        top.addView(brand, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        skip = label("تخطي", 14f, grey, false).apply {
+        val logo = text("مشوارك", 25f, burgundy, true)
+        top.addView(logo, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val pill = text("حجز مسبق", 12f, burgundy, true).apply {
             gravity = Gravity.CENTER
-            isClickable = true
-            isFocusable = true
-            contentDescription = "تخطي الشاشات التعريفية"
-            setPadding(dp(8), 0, dp(8), 0)
-            setOnClickListener { finishOnboarding() }
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = shape(cream, 16f, border)
         }
-        skip.minHeight = dp(44)
-        top.addView(skip, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        top.addView(pill)
         root.addView(top)
 
         val scroller = ScrollView(this).apply {
             isFillViewport = true
-            clipToPadding = false
             isVerticalScrollBarEnabled = false
+            clipToPadding = false
         }
-        val middle = LinearLayout(this).apply {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(20), dp(10), dp(20), dp(12))
+        }
+        scroller.addView(content, FrameLayout.LayoutParams(-1, -2))
+        root.addView(scroller, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        // One strong message: this is not a ride-hailing-on-demand application.
+        val hero = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(22), dp(3), dp(22), dp(10))
+            background = shape(cream, 22f, border)
+            setPadding(dp(18), dp(22), dp(18), dp(20))
         }
-        drawing = ImageView(this).apply {
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            adjustViewBounds = true
-            contentDescription = "صورة توضيحية لخدمات مشوارك"
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
-        }
-        val heightDp = resources.displayMetrics.heightPixels / resources.displayMetrics.density
-        val artHeight = when {
-            heightDp < 620 -> 270
-            heightDp < 730 -> 320
-            else -> 392
-        }
-        middle.addView(drawing, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(artHeight)))
-        heading = label("", 24f, charcoal, true).apply {
+        hero.addView(text("رحلتك على ميعادك", 26f, burgundy, true).apply {
             gravity = Gravity.CENTER
-            includeFontPadding = true
-            setPadding(dp(2), dp(10), dp(2), dp(8))
-        }
-        middle.addView(heading, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(22)
         })
-        description = label("", 15.5f, grey, false).apply {
+        hero.addView(text("مشوارك للمشاوير المخططة مسبقًا، مش طلب عربية لحظي.", 17f, dark, true).apply {
             gravity = Gravity.CENTER
-            setLineSpacing(dp(5).toFloat(), 1.05f)
-            setPadding(dp(5), 0, dp(5), 0)
-        }
-        middle.addView(description, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        scroller.addView(middle, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
-        root.addView(scroller, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+            setPadding(dp(1), dp(9), dp(1), dp(4))
+        })
+        hero.addView(text("حدّد مكانك ووجهتك، واختار اليوم والساعة المناسبة قبل إرسال طلبك.", 14f, muted, false).apply {
+            gravity = Gravity.CENTER
+            setLineSpacing(dp(4).toFloat(), 1.04f)
+        })
+        content.addView(hero, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(18) })
+
+        content.addView(text("اختار اللي يناسبك", 17f, dark, true).apply {
+            setPadding(dp(3), dp(0), dp(3), dp(12))
+        })
+        content.addView(
+            featureCard(
+                number = "١",
+                title = "اطلب مشوار",
+                detail = "حدد نقطة الانطلاق والوجهة والموعد، وراجع السعر المبدئي قبل تأكيد الطلب."
+            ),
+            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) }
+        )
+        content.addView(
+            featureCard(
+                number = "٢",
+                title = "سجّل كابتن واشتغل بعربيتك",
+                detail = "قدّم بياناتك وسيارتك للانضمام، سواء ملاكي أو تمناية سوزوكي أو تاكسي. استقبال المشاوير بعد تفعيل حسابك."
+            ),
+            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) }
+        )
+        content.addView(text("الحجز بيتم مسبقًا حسب الموعد، والتأكيد بعد مراجعة الطلب.", 12.5f, muted, false).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(9), dp(8), dp(9), dp(6))
+        })
 
         val footer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(24), dp(10), dp(24), dp(20))
+            setPadding(dp(20), dp(10), dp(20), dp(16))
         }
-        dots = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+        val go = text(if (reviewMode) "الرجوع إلى التطبيق" else "ابدأ استخدام مشوارك", 17f, Color.WHITE, true).apply {
             gravity = Gravity.CENTER
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-        }
-        footer.addView(dots, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(24)).apply {
-            bottomMargin = dp(17)
-        })
-        next = label("التالي", 16f, Color.WHITE, true).apply {
-            gravity = Gravity.CENTER
-            background = rounded(maroon, 16f)
+            background = shape(burgundy, 15f)
+            minHeight = dp(54)
             isClickable = true
             isFocusable = true
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            minHeight = dp(54)
-            setOnClickListener {
-                if (step == content.lastIndex) finishOnboarding() else showStep(step + 1)
-            }
+            contentDescription = if (reviewMode) "الرجوع إلى مشوارك" else "ابدأ استخدام مشوارك"
+            setPadding(dp(14), dp(13), dp(14), dp(13))
+            setOnClickListener { finishOnboarding() }
         }
-        footer.addView(next, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        footer.addView(go, LinearLayout.LayoutParams(-1, -2))
         root.addView(footer)
         setContentView(root)
-
-        showStep(step)
     }
 
-    // Detect horizontal swipes across the entire page, without blocking
-    // vertical scrolling, keyboard accessibility or button taps.
-    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                swipeStartX = event.rawX
-                swipeStartY = event.rawY
-            }
-            MotionEvent.ACTION_UP -> {
-                val dx = event.rawX - swipeStartX
-                val dy = event.rawY - swipeStartY
-                if (abs(dx) > dp(58) && abs(dx) > abs(dy) * 1.3f) {
-                    showStep((step + if (dx > 0) 1 else -1).coerceIn(0, 3))
-                    return true
-                }
-            }
+    private fun featureCard(number: String, title: String, detail: String): View {
+        val outer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.TOP
+            background = shape(Color.WHITE, 18f, border)
+            setPadding(dp(14), dp(15), dp(14), dp(15))
         }
-        return super.dispatchTouchEvent(event)
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        outState.putInt("onboarding_step", step)
-        super.onSaveInstanceState(outState)
-    }
-
-    private fun showStep(nextStep: Int) {
-        step = nextStep
-        heading.text = content[step].first
-        description.text = content[step].second
-        drawing.setImageResource(onboardingImages[step])
-        drawing.contentDescription = "صورة توضيحية: ${content[step].first}"
-        next.text = if (step == 3) "ابدأ الآن" else "التالي"
-        skip.visibility = if (step == 3) View.INVISIBLE else View.VISIBLE
-        dots.removeAllViews()
-        repeat(4) { i ->
-            val active = i == step
-            val dot = View(this).apply {
-                background = rounded(if (active) maroon else Color.rgb(224, 221, 220), 8f)
-                contentDescription = "الصفحة ${i + 1}${if (active) " الحالية" else ""}"
-            }
-            dots.addView(dot, LinearLayout.LayoutParams(dp(if (active) 25 else 8), dp(8)).apply {
-                marginStart = dp(4)
-                marginEnd = dp(4)
-            })
+        val numberBadge = text(number, 19f, burgundy, true).apply {
+            gravity = Gravity.CENTER
+            background = shape(Color.rgb(250, 238, 242), 13f)
         }
+        outer.addView(numberBadge, LinearLayout.LayoutParams(dp(46), dp(46)).apply {
+            marginEnd = dp(12)
+        })
+        val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        words.addView(text(title, 17f, burgundy, true))
+        words.addView(text(detail, 14f, muted, false).apply {
+            setPadding(0, dp(5), 0, 0)
+            setLineSpacing(dp(3).toFloat(), 1.0f)
+        })
+        outer.addView(words, LinearLayout.LayoutParams(0, -2, 1f))
+        return outer
     }
 
     private fun finishOnboarding() {
         if (reviewMode) {
-            finish() // Help > watch again; return to the current booking unchanged.
+            finish() // Don't reload WebView or lose a customer booking.
             return
         }
-        getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_COMPLETED, true).apply()
+        getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_COMPLETED, true).apply()
         startActivity(Intent(this, MainActivity::class.java))
         finish()
     }
 
-    private fun label(value: String, size: Float, color: Int, bold: Boolean) = TextView(this).apply {
+    private fun text(value: String, size: Float, color: Int, bold: Boolean) = TextView(this).apply {
         text = value
         textSize = size
         setTextColor(color)
         textDirection = View.TEXT_DIRECTION_RTL
-        typeface = if (bold) Typeface.create("sans-serif", Typeface.BOLD) else Typeface.create("sans-serif", Typeface.NORMAL)
+        typeface = Typeface.create("sans-serif", if (bold) Typeface.BOLD else Typeface.NORMAL)
     }
 
-    private fun rounded(color: Int, radiusDp: Float) = android.graphics.drawable.GradientDrawable().apply {
+    private fun shape(color: Int, radius: Float, stroke: Int? = null) = GradientDrawable().apply {
         setColor(color)
-        cornerRadius = resources.displayMetrics.density * radiusDp
+        cornerRadius = dp(radius)
+        if (stroke != null) setStroke(dp(1), stroke)
     }
 
-    private fun dp(dp: Int) = (dp * resources.displayMetrics.density + .5f).toInt()
+    private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
+    private fun dp(value: Float) = (value * resources.displayMetrics.density + 0.5f)
 }
