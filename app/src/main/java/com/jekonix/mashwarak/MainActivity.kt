@@ -301,18 +301,19 @@ class MainActivity : AppCompatActivity() {
             clipToOutline = true
             setOnClickListener { showHelpCenter() }
         }
-        helpTouchTarget.addView(
+                helpTouchTarget.addView(
             helpButton,
-            FrameLayout.LayoutParams(dp(46), dp(66)).apply {
-                gravity = Gravity.CENTER
+            FrameLayout.LayoutParams(dp(46), dp(64)).apply {
+                gravity = Gravity.LEFT or Gravity.CENTER_VERTICAL
+                leftMargin = dp(1)
             }
         )
         root.addView(
             helpTouchTarget,
-            FrameLayout.LayoutParams(dp(48), dp(68)).apply {
+            FrameLayout.LayoutParams(dp(52), dp(64)).apply {
                 gravity = Gravity.BOTTOM or Gravity.LEFT
                 leftMargin = dp(11)
-                bottomMargin = dp(7)
+                bottomMargin = dp(11)
             }
         )
         // Set the physical side from the Android device language at launch.
@@ -1202,17 +1203,22 @@ class MainActivity : AppCompatActivity() {
         updateHelpButtonPositionFromDevice()
     }
 
-    private fun positionHelpButton(isRtl: Boolean) {
+        private fun positionHelpButton(isRtl: Boolean) {
         if (!::helpTouchTarget.isInitialized) return
 
         val lp = (helpTouchTarget.layoutParams as? FrameLayout.LayoutParams)
-            ?: FrameLayout.LayoutParams(dp(48), dp(68))
-        lp.width = dp(48)
-        lp.height = dp(68)
-        lp.gravity = Gravity.BOTTOM or (if (isRtl) Gravity.RIGHT else Gravity.LEFT)
+            ?: FrameLayout.LayoutParams(dp(52), dp(64))
+
+        lp.width = dp(52)
+        lp.height = dp(64)
+
+        lp.gravity = Gravity.BOTTOM or
+            (if (isRtl) Gravity.RIGHT else Gravity.LEFT)
+
         lp.leftMargin = if (isRtl) 0 else dp(11)
-        lp.rightMargin = if (isRtl) dp(11) else 0
-        lp.bottomMargin = dp(7)
+        lp.rightMargin = if (isRtl) dp(7) else 0
+        lp.bottomMargin = dp(11)
+
         helpTouchTarget.layoutParams = lp
         helpTouchTarget.requestLayout()
     }
