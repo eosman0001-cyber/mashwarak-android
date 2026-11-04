@@ -25,10 +25,10 @@ class MashwarakMessagingService : FirebaseMessagingService() {
             ?: message.notification?.body
             ?: "لديك إشعار جديد"
 
-        showNotification(title, body)
+        showNotification(title, body, message.data["type"] == "CAPTAIN_AUTO_OFFER")
     }
 
-    private fun showNotification(title: String, body: String) {
+    private fun showNotification(title: String, body: String, captainOffer: Boolean) {
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val channelId = "mashwarak_admin_alerts"
         val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -53,10 +53,11 @@ class MashwarakMessagingService : FirebaseMessagingService() {
 
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            putExtra("OPEN_NOTIFICATIONS", true)
+            if (captainOffer) putExtra("OPEN_CAPTAIN_OFFERS_V246", true)
+            else putExtra("OPEN_NOTIFICATIONS", true)
 }
         val pending = PendingIntent.getActivity(
-            this, 1001, intent,
+            this, if (captainOffer) 2461 else 1001, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 

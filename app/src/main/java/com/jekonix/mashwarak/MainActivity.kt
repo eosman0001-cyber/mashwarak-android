@@ -117,6 +117,7 @@ class MainActivity : AppCompatActivity() {
     private val lifecycleHandler = Handler(Looper.getMainLooper())
     private val trustedFrameOrigins by lazy { BuildConfig.WEB_APP_ORIGINS.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet() }
     private var openNotificationsAfterLoad = false
+    private var openCaptainOffersAfterLoadV246 = false
     private var nativeBackRequestInFlight = false
 
     // V1.13.0 | Smart Location - native Google Maps picker + fast GPS
@@ -246,6 +247,8 @@ class MainActivity : AppCompatActivity() {
 
         openNotificationsAfterLoad =
             intent?.getBooleanExtra("OPEN_NOTIFICATIONS", false) == true
+        openCaptainOffersAfterLoadV246 =
+            intent?.getBooleanExtra("OPEN_CAPTAIN_OFFERS_V246", false) == true
 
         captureInboundLocationIntent(intent)
 
@@ -746,6 +749,10 @@ class MainActivity : AppCompatActivity() {
                     openNotificationsIfRequested()
                 }, 450)
             }
+        }
+        if (intent.getBooleanExtra("OPEN_CAPTAIN_OFFERS_V246", false)) {
+            openCaptainOffersAfterLoadV246 = true
+            if (::webView.isInitialized) webView.postDelayed({ openCaptainOffersV246() }, 500)
         }
     }
 
@@ -2463,7 +2470,28 @@ class MainActivity : AppCompatActivity() {
         lifecycleHandler.removeCallbacksAndMessages(null)
         hideSplash()
         openNotificationsIfRequested()
+        openCaptainOffersV246()
         dispatchPendingSharedDestination()
+    }
+
+    private fun openCaptainOffersV246() {
+        if (!openCaptainOffersAfterLoadV246 || !::webView.isInitialized) return
+        openCaptainOffersAfterLoadV246 = false
+        val script = """(function(){
+            var msg={type:'mashwarak-open-captain-offers'};
+            var visited=[];
+            function walk(w,depth){
+              if(!w||depth>9||visited.indexOf(w)>=0)return;
+              visited.push(w);
+              try{w.postMessage(msg,'*')}catch(e){}
+              try{for(var i=0;i<w.length;i++)walk(w[i],depth+1)}catch(e){}
+            }
+            walk(window,0);
+        })();""".trimIndent()
+        // Google Sites may host the Apps Script content inside a nested frame.
+        listOf(600L, 1600L, 3600L).forEach { delay ->
+            webView.postDelayed({ if (!isDestroyed && ::webView.isInitialized) webView.evaluateJavascript(script, null) }, delay)
+        }
     }
 
     private fun installScopedNativeBridge() {
@@ -2471,7 +2499,7 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "حدّث Android System WebView للاستفادة من الخريطة والكاميرا داخل التطبيق.", Toast.LENGTH_LONG).show()
             return
         }
-        WebViewCompat.addWebMessageListener(webView, "MashwarakNativeV201", trustedFrameOrigins) { _, message, origin, _, _ ->
+        WebViewCompat.addWebMessageListener(webView, "MashwarakNativeV201", trustedFrameOrigins) { _, message, origin, _, replyProxy ->
             if (isDestroyed || !trustedFrameOrigins.contains(origin.toString().trimEnd('/'))) return@addWebMessageListener
             if (message.type != androidx.webkit.WebMessageCompat.TYPE_STRING) return@addWebMessageListener
             val raw = message.data ?: return@addWebMessageListener
@@ -2480,6 +2508,18 @@ class MainActivity : AppCompatActivity() {
                 val data = JSONObject(raw)
                 when (data.optString("action")) {
                     "ready" -> revealApp()
+                    "getFcmToken" -> {
+                        if (FirebaseApp.getApps(this).isNotEmpty()) {
+                            FirebaseMessaging.getInstance().token.addOnSuccessListener { fcm ->
+                                if (!isDestroyed && fcm.isNotBlank()) {
+                                    val result = JSONObject().put("action", "fcmTokenV246").put("token", fcm).toString()
+                                    runCatching {
+                                        replyProxy.postMessage(androidx.webkit.WebMessageCompat(result))
+                                    }
+                                }
+                            }
+                        }
+                    }
                     "camera" -> MashwarakCameraBridge().setCaptureMode(data.optString("mode"))
                     "location" -> requestNativeCurrentLocation()
                     "picker" -> MashwarakLocationBridge().openNativePicker(data.optString("mode"), data.optString("lat"), data.optString("lng"), data.optString("label").take(300))
