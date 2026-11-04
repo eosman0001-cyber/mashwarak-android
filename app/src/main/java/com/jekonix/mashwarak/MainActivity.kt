@@ -30,6 +30,7 @@ import java.util.Locale
 import org.json.JSONObject
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
@@ -44,6 +45,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.PixelCopy
 import android.view.View
 import android.webkit.*
 import android.widget.FrameLayout
@@ -88,6 +90,10 @@ class MainActivity : AppCompatActivity() {
     // V230: the WebView renderer can be reclaimed when Android backgrounds the app.
     private var webRendererGone = false
     private var activityInForeground = false
+    // Check only when returning from another app. Never reload an unfinished ride.
+    private var wasBackgrounded = false
+    private var resumeVisualCheckId = 0
+    private var resumeBlankRecoveryVisible = false
     private var networkObserverRegistered = false
     private var lastObservedOnline: Boolean? = null
     // showSplash() clears lifecycleHandler callbacks; network events need their own handler.
@@ -278,11 +284,12 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        // The native help icon covers the Google Sites badge in the position
-        // observed on real devices: English/LTR -> LEFT, Arabic/RTL -> RIGHT.
-        // Keep its width/color unchanged; extra height exposes the entire avatar.
+        // V236: a tightly-cropped icon, WITHOUT a raised white card or caption.
+        // The flat white UNDERLAY blends into the site's white footer while physically
+        // hiding Google's larger bottom badge; the transparent touch shield covers
+        // its full hit region. Shrinking the underlay would expose the badge.
         helpButton = ImageView(this).apply {
-            setImageResource(R.drawable.mashwarak_support_avatar)
+            setImageResource(R.drawable.mashwarak_support_agent)
             scaleType = ImageView.ScaleType.FIT_CENTER
             setPadding(0, 0, 0, 0)
             background = null
@@ -294,29 +301,40 @@ class MainActivity : AppCompatActivity() {
             isClickable = true
             isFocusable = true
             contentDescription = "مساعدة مشوارك"
-            background = GradientDrawable().apply {
-                setColor(Color.rgb(116, 33, 63))
-                cornerRadius = dp(14).toFloat()
-            }
-            clipToOutline = true
+            elevation = dp(15).toFloat()
             setOnClickListener { showHelpCenter() }
         }
-                helpTouchTarget.addView(
+        // No white rounded container and NO shadow around the visible icon.
+        // The flat cover is deliberately larger than the icon, but has no border
+        // or rounded outline. It blocks both the visible Sites badge and its taps.
+        val sitesBadgeCover = View(this).apply {
+            setBackgroundColor(Color.WHITE)
+            isClickable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        helpTouchTarget.addView(
+            sitesBadgeCover,
+            FrameLayout.LayoutParams(dp(91), dp(108)).apply {
+                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                bottomMargin = 0
+            }
+        )
+        helpTouchTarget.addView(
             helpButton,
-            FrameLayout.LayoutParams(dp(46), dp(64)).apply {
-                gravity = Gravity.LEFT or Gravity.CENTER_VERTICAL
-                leftMargin = dp(1)
+            FrameLayout.LayoutParams(dp(62), dp(84)).apply {
+                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                bottomMargin = dp(13)
             }
         )
         root.addView(
             helpTouchTarget,
-            FrameLayout.LayoutParams(dp(52), dp(64)).apply {
+            FrameLayout.LayoutParams(dp(112), dp(125)).apply {
                 gravity = Gravity.BOTTOM or Gravity.LEFT
-                leftMargin = dp(11)
-                bottomMargin = dp(11)
+                leftMargin = 0
+                bottomMargin = 0
             }
         )
-        // Set the physical side from the Android device language at launch.
+        // The complete shield, not only the visual label, must change sides.
         updateHelpButtonPositionFromDevice()
 
         splash = buildSplash()
@@ -1191,34 +1209,62 @@ class MainActivity : AppCompatActivity() {
      * was opened from a push notification.
      */
     private fun updateHelpButtonPositionFromDevice() {
-        val deviceLocale = resources.configuration.locales[0]
-        val isRtl = android.text.TextUtils.getLayoutDirectionFromLocale(deviceLocale) ==
-            View.LAYOUT_DIRECTION_RTL
+        val isRtl = resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
         positionHelpButton(isRtl)
     }
 
     private fun updateHelpButtonPositionFromPage() {
-        // Page direction is unrelated to the device language: keep the same
-        // side after WebView navigation and page reloads.
-        updateHelpButtonPositionFromDevice()
+        if (!::webView.isInitialized) {
+            updateHelpButtonPositionFromDevice()
+            return
+        }
+
+        val js = """
+            (function() {
+              try {
+                var d = (document.documentElement && document.documentElement.dir) || '';
+                var b = (document.body && document.body.dir) || '';
+                var c = '';
+                if (document.body && window.getComputedStyle) {
+                  c = window.getComputedStyle(document.body).direction || '';
+                }
+                var lang = (document.documentElement && document.documentElement.lang) || navigator.language || '';
+                var raw = (d || b || c || '').toLowerCase();
+                if (raw === 'rtl') return 'rtl';
+                if (raw === 'ltr') return 'ltr';
+                return /^(ar|he|fa|ur)(-|$)/i.test(lang) ? 'rtl' : 'ltr';
+              } catch (e) {
+                return '';
+              }
+            })();
+        """.trimIndent()
+
+        webView.evaluateJavascript(js) { result ->
+            val dir = result?.replace("\"", "")?.trim()?.lowercase()
+            when (dir) {
+                "rtl" -> positionHelpButton(true)
+                "ltr" -> positionHelpButton(false)
+                else -> updateHelpButtonPositionFromDevice()
+            }
+        }
     }
 
-        private fun positionHelpButton(isRtl: Boolean) {
+    private fun positionHelpButton(isRtl: Boolean) {
         if (!::helpTouchTarget.isInitialized) return
 
         val lp = (helpTouchTarget.layoutParams as? FrameLayout.LayoutParams)
-            ?: FrameLayout.LayoutParams(dp(52), dp(64))
-
-        lp.width = dp(52)
-        lp.height = dp(64)
-
-        lp.gravity = Gravity.BOTTOM or
-            (if (isRtl) Gravity.RIGHT else Gravity.LEFT)
-
-        lp.leftMargin = if (isRtl) 0 else dp(11)
-        lp.rightMargin = if (isRtl) dp(7) else 0
-        lp.bottomMargin = dp(11)
-
+            ?: FrameLayout.LayoutParams(dp(112), dp(125))
+        lp.width = dp(112)
+        lp.height = dp(125)
+        // Absolute LEFT / RIGHT: Gravity.START/END can switch meanings when
+        // the OS and the Google Sites page have different RTL directions.
+        // The entire cover+touch target moves together with the visible icon.
+        lp.gravity = Gravity.BOTTOM or (if (isRtl) Gravity.LEFT else Gravity.RIGHT)
+        lp.leftMargin = 0
+        lp.rightMargin = 0
+        lp.marginStart = 0
+        lp.marginEnd = 0
+        lp.bottomMargin = 0
         helpTouchTarget.layoutParams = lp
         helpTouchTarget.requestLayout()
     }
@@ -1863,6 +1909,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         activityInForeground = false
+        wasBackgrounded = true
+        resumeVisualCheckId++
         if (::webView.isInitialized && !webRendererGone) {
             runCatching { webView.onPause() }
         }
@@ -1873,16 +1921,79 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         activityInForeground = true
         if (webRendererGone) {
-            // Never call loadUrl/reload on the destroyed WebView. The Apps Script
-            // receipt recovery restores only a previously confirmed request.
+            // A dead renderer must not be reused; existing V230 recovery handles it.
             recreate()
             return
         }
         if (::webView.isInitialized) {
             runCatching { webView.onResume() }
+            if (wasBackgrounded) {
+                wasBackgrounded = false
+                // Repaint the SAME WebView; do not reload and discard the ride form.
+                val checkId = ++resumeVisualCheckId
+                webView.post {
+                    if (canCheckResumedWebView(checkId)) {
+                        webView.requestLayout()
+                        webView.invalidate()
+                        root.invalidate()
+                        webView.postDelayed({ checkResumeVisualSurface(checkId, false) }, 1800L)
+                    }
+                }
+            }
             Handler(Looper.getMainLooper()).postDelayed({
                 if (!isFinishing && !isDestroyed) checkPendingUpdateInstallOnResume()
             }, 300)
+        }
+    }
+
+    // The Google Sites shell can remain alive while its embedded Mashwarak frame
+    // paints white. A JavaScript ping alone cannot detect that visual failure.
+    // Sample the ACTUAL screen twice (API 26+); if it is still white, show an
+    // explicit recovery option instead of silently reloading a customer's ride.
+    private fun canCheckResumedWebView(checkId: Int): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            resumeVisualCheckId == checkId && activityInForeground &&
+            !isDestroyed && !isFinishing && !webRendererGone &&
+            pageShown && !webLoadFailed && !offlineScreenVisible &&
+            ::webView.isInitialized && webView.isAttachedToWindow &&
+            webView.width > 0 && webView.height > 0
+
+    private fun checkResumeVisualSurface(checkId: Int, secondSample: Boolean) {
+        if (!canCheckResumedWebView(checkId)) return
+        val bitmap = Bitmap.createBitmap(60, 96, Bitmap.Config.ARGB_8888)
+        try {
+            PixelCopy.request(window, bitmap, { status ->
+                try {
+                    if (status != PixelCopy.SUCCESS || !canCheckResumedWebView(checkId)) return@request
+                    var pale = 0
+                    val count = bitmap.width * bitmap.height
+                    // A healthy map or burgundy navigation has ample nonwhite pixels.
+                    for (y in 0 until bitmap.height) {
+                        for (x in 0 until bitmap.width) {
+                            val color = bitmap.getPixel(x, y)
+                            if (Color.red(color) >= 243 && Color.green(color) >= 243 && Color.blue(color) >= 243) pale++
+                        }
+                    }
+                    if (pale.toFloat() / count < 0.94f) return@request
+                    if (!secondSample) {
+                        webView.requestLayout()
+                        webView.invalidate()
+                        root.invalidate()
+                        webView.postDelayed({ checkResumeVisualSurface(checkId, true) }, 1400L)
+                    } else {
+                        resumeBlankRecoveryVisible = true
+                        showNativeOfflineScreen(false)
+                        offlineTitle.text = "الشاشة لم ترجع بشكل صحيح"
+                        offlineDescription.text = "التطبيق مازال شغال، لكن عرضه لم يستعد بعد الرجوع. نقدر نفتح الصفحة من جديد بعد تأكيدك؛ بيانات المشوار غير المحفوظة قد تضيع."
+                        offlineRetry.text = "خيارات استعادة الصفحة"
+                    }
+                } finally {
+                    bitmap.recycle()
+                }
+            }, networkUiHandler)
+        } catch (_: Exception) {
+            bitmap.recycle()
+            // PixelCopy can fail during a window transition. Do not reset the page.
         }
     }
 
@@ -1895,6 +2006,7 @@ class MainActivity : AppCompatActivity() {
             )
             .setNegativeButton("إلغاء", null)
             .setPositiveButton("تحديث") { _, _ ->
+                if (resumeBlankRecoveryVisible) hideNativeOfflineScreen()
                 webView.stopLoading()
                 showSplash()
                 webView.reload()
@@ -2178,7 +2290,7 @@ class MainActivity : AppCompatActivity() {
             // Retry at most once per connection-restored event, only before readiness.
             // Never refresh an active booking automatically.
             loadMashwarakFromNative()
-        } else if (pageShown && !webLoadFailed) {
+        } else if (pageShown && !webLoadFailed && !resumeBlankRecoveryVisible) {
             hideNativeOfflineScreen() // Preserve unsent booking details.
         } else if (webLoadFailed) {
             showNativeOfflineScreen(false) // Manual retry when an active navigation failed.
@@ -2224,6 +2336,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun hideNativeOfflineScreen() {
         if (!::offlineScreen.isInitialized) return
+        resumeBlankRecoveryVisible = false
         offlineScreenVisible = false
         offlineScreen.visibility = View.GONE
     }
@@ -2316,7 +2429,11 @@ class MainActivity : AppCompatActivity() {
             isClickable = true
             isFocusable = true
             setOnClickListener {
-                if (!isInternetAvailable()) {
+                if (resumeBlankRecoveryVisible) {
+                    // Keep the recovery screen in place if the user cancels.
+                    // This is a user-initiated decision, never an automatic refresh.
+                    showRefreshConfirmation()
+                } else if (!isInternetAvailable()) {
                     showNativeOfflineScreen(true)
                 } else if (pageShown && !webLoadFailed) {
                     hideNativeOfflineScreen() // Preserve unsent ride data.
@@ -2653,6 +2770,7 @@ class MainActivity : AppCompatActivity() {
         }
         runCatching { unregisterReceiver(updateDownloadReceiver) }
         lifecycleHandler.removeCallbacksAndMessages(null)
+        resumeVisualCheckId++
         locationGeneration++
         locationExecutor.shutdownNow()
         fileCallback?.onReceiveValue(null)
