@@ -284,12 +284,11 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        // V236: a tightly-cropped icon, WITHOUT a raised white card or caption.
-        // The flat white UNDERLAY blends into the site's white footer while physically
-        // hiding Google's larger bottom badge; the transparent touch shield covers
-        // its full hit region. Shrinking the underlay would expose the badge.
+        // Help avatar — restore the compact burgundy badge seen in the approved
+        // booking-screen screenshot. Use the EXISTING transparent PNG, not the
+        // old JPG with a visible white rectangular background.
         helpButton = ImageView(this).apply {
-            setImageResource(R.drawable.mashwarak_support_agent)
+            setImageResource(R.drawable.mashwarak_support_avatar)
             scaleType = ImageView.ScaleType.FIT_CENTER
             setPadding(0, 0, 0, 0)
             background = null
@@ -298,44 +297,36 @@ class MainActivity : AppCompatActivity() {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         helpTouchTarget = FrameLayout(this).apply {
+            background = roundedBackground(
+                color = Color.rgb(115, 31, 65),
+                radiusDp = 20f
+            )
             isClickable = true
             isFocusable = true
             contentDescription = "مساعدة مشوارك"
             elevation = dp(15).toFloat()
             setOnClickListener { showHelpCenter() }
         }
-        // No white rounded container and NO shadow around the visible icon.
-        // The flat cover is deliberately larger than the icon, but has no border
-        // or rounded outline. It blocks both the visible Sites badge and its taps.
-        val sitesBadgeCover = View(this).apply {
-            setBackgroundColor(Color.WHITE)
-            isClickable = false
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
-        helpTouchTarget.addView(
-            sitesBadgeCover,
-            FrameLayout.LayoutParams(dp(91), dp(108)).apply {
-                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                bottomMargin = 0
-            }
-        )
         helpTouchTarget.addView(
             helpButton,
-            FrameLayout.LayoutParams(dp(62), dp(84)).apply {
-                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                bottomMargin = dp(13)
+            FrameLayout.LayoutParams(dp(54), dp(65)).apply {
+                gravity = Gravity.CENTER
             }
         )
         root.addView(
             helpTouchTarget,
-            FrameLayout.LayoutParams(dp(112), dp(125)).apply {
+            FrameLayout.LayoutParams(dp(56), dp(66)).apply {
+                // Keep the approved compact burgundy avatar. The side is set
+                // from the device language after the view has been attached.
                 gravity = Gravity.BOTTOM or Gravity.LEFT
-                leftMargin = 0
-                bottomMargin = 0
+                leftMargin = dp(10)
+                bottomMargin = dp(6)
             }
         )
-        // The complete shield, not only the visual label, must change sides.
-        updateHelpButtonPositionFromDevice()
+        syncHelpBadgeWithDeviceLanguage()
+        // No oversized white Google Sites cover: it previously erased the
+        // left side of the burgundy booking CTA. The badge now covers only its
+        // own visible area. No other map/booking elements are modified.
 
         splash = buildSplash()
         root.addView(
@@ -510,8 +501,6 @@ class MainActivity : AppCompatActivity() {
                     if (!isInternetAvailable()) showNativeOfflineScreen(true)
                     return
                 }
-
-                updateHelpButtonPositionFromPage()
 
                 // Small delay prevents the raw Google Sites frame from
                 // flashing before the page is visually ready.
@@ -1201,74 +1190,30 @@ class MainActivity : AppCompatActivity() {
         webView.postDelayed({ pendingSharedDestination = null }, 11000L)
     }
 
-    /**
-     * Google Sites hosts the Mashwarak web app inside its page, so Android
-     * cannot directly call a JavaScript function inside the cross-origin frame.
-     * The notifications bell is fixed at the upper-left of the Mashwarak UI.
-     * A synthetic tap is dispatched to that visible control only when the app
-     * was opened from a push notification.
+    /** Match the native help badge to the device's RTL/LTR direction.
+     * Arabic and other RTL device languages: bottom-right.
+     * English and other LTR device languages: bottom-left.
+     * The icon size, burgundy shape, click handler and vertical offset remain unchanged.
      */
-    private fun updateHelpButtonPositionFromDevice() {
-        val isRtl = resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
-        positionHelpButton(isRtl)
-    }
-
-    private fun updateHelpButtonPositionFromPage() {
-        if (!::webView.isInitialized) {
-            updateHelpButtonPositionFromDevice()
-            return
-        }
-
-        val js = """
-            (function() {
-              try {
-                var d = (document.documentElement && document.documentElement.dir) || '';
-                var b = (document.body && document.body.dir) || '';
-                var c = '';
-                if (document.body && window.getComputedStyle) {
-                  c = window.getComputedStyle(document.body).direction || '';
-                }
-                var lang = (document.documentElement && document.documentElement.lang) || navigator.language || '';
-                var raw = (d || b || c || '').toLowerCase();
-                if (raw === 'rtl') return 'rtl';
-                if (raw === 'ltr') return 'ltr';
-                return /^(ar|he|fa|ur)(-|$)/i.test(lang) ? 'rtl' : 'ltr';
-              } catch (e) {
-                return '';
-              }
-            })();
-        """.trimIndent()
-
-        webView.evaluateJavascript(js) { result ->
-            val dir = result?.replace("\"", "")?.trim()?.lowercase()
-            when (dir) {
-                "rtl" -> positionHelpButton(true)
-                "ltr" -> positionHelpButton(false)
-                else -> updateHelpButtonPositionFromDevice()
-            }
-        }
-    }
-
-    private fun positionHelpButton(isRtl: Boolean) {
+    private fun syncHelpBadgeWithDeviceLanguage() {
         if (!::helpTouchTarget.isInitialized) return
-
-        val lp = (helpTouchTarget.layoutParams as? FrameLayout.LayoutParams)
-            ?: FrameLayout.LayoutParams(dp(112), dp(125))
-        lp.width = dp(112)
-        lp.height = dp(125)
-        // Absolute LEFT / RIGHT: Gravity.START/END can switch meanings when
-        // the OS and the Google Sites page have different RTL directions.
-        // The entire cover+touch target moves together with the visible icon.
-        lp.gravity = Gravity.BOTTOM or (if (isRtl) Gravity.LEFT else Gravity.RIGHT)
-        lp.leftMargin = 0
-        lp.rightMargin = 0
-        lp.marginStart = 0
-        lp.marginEnd = 0
-        lp.bottomMargin = 0
-        helpTouchTarget.layoutParams = lp
-        helpTouchTarget.requestLayout()
+        val locale = resources.configuration.locales.get(0) // minSdk 24
+        val rightSide = android.text.TextUtils.getLayoutDirectionFromLocale(locale) ==
+            View.LAYOUT_DIRECTION_RTL
+        val params = helpTouchTarget.layoutParams as? FrameLayout.LayoutParams ?: return
+        val newGravity = Gravity.BOTTOM or (if (rightSide) Gravity.RIGHT else Gravity.LEFT)
+        val newLeftMargin = if (rightSide) 0 else dp(10)
+        val newRightMargin = if (rightSide) dp(10) else 0
+        if (params.gravity == newGravity && params.leftMargin == newLeftMargin &&
+            params.rightMargin == newRightMargin) return
+        params.gravity = newGravity
+        params.leftMargin = newLeftMargin
+        params.rightMargin = newRightMargin
+        params.bottomMargin = dp(6)
+        helpTouchTarget.layoutParams = params
     }
 
+    /** Open the existing native support sheet; the badge follows device RTL/LTR. */
     private fun showHelpCenter() {
         val dialog = android.app.Dialog(this)
         val sheet = LinearLayout(this).apply {
@@ -1919,6 +1864,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // The badge must follow the side Google Sites uses for the device's
+        // RTL/LTR language, including when returning from another app.
+        syncHelpBadgeWithDeviceLanguage()
         activityInForeground = true
         if (webRendererGone) {
             // A dead renderer must not be reused; existing V230 recovery handles it.

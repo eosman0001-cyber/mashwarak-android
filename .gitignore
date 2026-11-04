@@ -1,0 +1,25 @@
+# Local Android/Gradle outputs
+.gradle/
+.idea/
+**/build/
+local.properties
+*.iml
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# Temporary archives and historical snapshots
+BACKUP_BEFORE*/
+ROLLBACK/
+WEB_UPDATE/
+*.zip
+*.rar
+*.backup
+*.kt.txt
+*.kts.txt
+*.xml.txt
+*.yml.txt
+*.properties.txt
+.DS_Store
+Thumbs.db
