@@ -2514,7 +2514,7 @@ class MainActivity : AppCompatActivity() {
                                 if (!isDestroyed && fcm.isNotBlank()) {
                                     val result = JSONObject().put("action", "fcmTokenV246").put("token", fcm).toString()
                                     runCatching {
-                                        replyProxy.postMessage(androidx.webkit.WebMessageCompat(result))
+                                        replyProxy.postMessage(result)
                                     }
                                 }
                             }
