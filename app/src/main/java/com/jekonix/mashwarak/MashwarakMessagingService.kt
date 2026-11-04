@@ -25,10 +25,17 @@ class MashwarakMessagingService : FirebaseMessagingService() {
             ?: message.notification?.body
             ?: "لديك إشعار جديد"
 
-        showNotification(title, body, message.data["type"] == "CAPTAIN_AUTO_OFFER")
+        val captainOffer = message.data["type"] == "CAPTAIN_AUTO_OFFER"
+        // V246.4: never show a captain-offer notification after the offer expires.
+        // Old payloads without expiry keep their previous behavior until the web
+        // backend is deployed; this avoids a notification blackout during rollout.
+        val expiresAtMs = if (captainOffer) message.data["expiresAtMs"]?.toLongOrNull() else null
+        val remainingMs = expiresAtMs?.minus(System.currentTimeMillis())
+        if (captainOffer && remainingMs != null && remainingMs <= 0L) return
+        showNotification(title, body, captainOffer, if (captainOffer) remainingMs else null)
     }
 
-    private fun showNotification(title: String, body: String, captainOffer: Boolean) {
+    private fun showNotification(title: String, body: String, captainOffer: Boolean, expiresInMs: Long?) {
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val channelId = "mashwarak_admin_alerts"
         val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -61,7 +68,7 @@ class MashwarakMessagingService : FirebaseMessagingService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = NotificationCompat.Builder(this, channelId)
+        val builder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(body)
@@ -71,8 +78,7 @@ class MashwarakMessagingService : FirebaseMessagingService() {
             .setVibrate(longArrayOf(0, 350, 180, 350))
             .setAutoCancel(true)
             .setContentIntent(pending)
-            .build()
-
-        manager.notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(), notification)
+        if (expiresInMs != null && expiresInMs > 0L) builder.setTimeoutAfter(expiresInMs)
+        manager.notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(), builder.build())
     }
 }
