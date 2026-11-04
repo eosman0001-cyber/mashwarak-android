@@ -1959,6 +1959,9 @@ class MainActivity : AppCompatActivity() {
             webView.width > 0 && webView.height > 0
 
     private fun checkResumeVisualSurface(checkId: Int, secondSample: Boolean) {
+        // PixelCopy was introduced in API 26. Keep minSdk 24 and skip only this
+        // optional visual check on Android 7.x; never access PixelCopy below O.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         if (!canCheckResumedWebView(checkId)) return
         val bitmap = Bitmap.createBitmap(60, 96, Bitmap.Config.ARGB_8888)
         try {
