@@ -30,9 +30,50 @@ class MashwarakMessagingService : FirebaseMessagingService() {
         // Old payloads without expiry keep their previous behavior until the web
         // backend is deployed; this avoids a notification blackout during rollout.
         val expiresAtMs = if (captainOffer) message.data["expiresAtMs"]?.toLongOrNull() else null
-        val remainingMs = expiresAtMs?.minus(System.currentTimeMillis())
+        val nowMs = System.currentTimeMillis()
+        val remainingMs = expiresAtMs?.minus(nowMs)
         if (captainOffer && remainingMs != null && remainingMs <= 0L) return
+
+        // V247.2: ignore old ride notifications and duplicate FCM deliveries.
+        // A device can receive the same NEW_RIDE from both admin topic and
+        // its registered individual token. Only one notification should show.
+        val isSupport = message.data["alertCategory"] == "SUPPORT"
+        val isNewRide = message.data["eventType"] == "NEW_RIDE" && !isSupport
+        val rideId = if (captainOffer) message.data["rideId"] else message.data["entityId"]
+        val expiringRide = captainOffer || isNewRide || isSupport
+        if (expiringRide) {
+            val notificationDeadline = message.data["expiresAtMs"]?.toLongOrNull()
+            if (notificationDeadline != null && nowMs >= notificationDeadline) return
+            // Older FCM messages lack expiresAtMs; use their actual send time.
+            val maxStaleMs = if (isSupport) 3_600_000L else 180_000L
+            if (notificationDeadline == null && message.sentTime > 0L && nowMs - message.sentTime > maxStaleMs) return
+        }
+        val duplicateGroup = when {
+            captainOffer && !rideId.isNullOrBlank() -> "CAPTAIN_AUTO_OFFER:" + rideId
+            isNewRide && !rideId.isNullOrBlank() -> "NEW_RIDE:" + rideId
+            isSupport && !rideId.isNullOrBlank() -> "SUPPORT:" + rideId
+            else -> null
+        }
+        if (duplicateGroup != null && duplicateAlertRecently(duplicateGroup, nowMs)) return
         showNotification(title, body, captainOffer, if (captainOffer) remainingMs else null)
+    }
+
+    // Persist across service recreation: topic and per-device pushes must not
+    // turn into two alerts for the same ride on the same phone.
+    private fun duplicateAlertRecently(group: String, nowMs: Long): Boolean {
+        synchronized(MashwarakMessagingService::class.java) {
+            val prefs = getSharedPreferences("mw_push_dedupe_v247", MODE_PRIVATE)
+            val key = "ride:" + group
+            val last = prefs.getLong(key, 0L)
+            if (last > 0L && nowMs - last in 0L..1_800_000L) return true
+            val editor = prefs.edit()
+            // Compact expired history; this is small and runs only for ride alerts.
+            for ((k, v) in prefs.all) {
+                if (k.startsWith("ride:") && v is Long && nowMs - v > 86_400_000L) editor.remove(k)
+            }
+            editor.putLong(key, nowMs).commit()
+            return false
+        }
     }
 
     private fun showNotification(title: String, body: String, captainOffer: Boolean, expiresInMs: Long?) {
