@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.Mashwarak.Entry" parent="Theme.Mashwarak.EntryBase">
+        <item name="android:windowSplashScreenBackground">#1C1C1C</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/mashwarak_monogram_launch</item>
+    </style>
+</resources>

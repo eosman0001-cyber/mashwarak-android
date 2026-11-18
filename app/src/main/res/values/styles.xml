@@ -7,4 +7,13 @@
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowNoTitle">true</item>
     </style>
+    <!-- Scoped to the native entry / intro screens; other activities retain their theme. -->
+    <style name="Theme.Mashwarak.EntryBase" parent="Theme.Mashwarak">
+        <item name="android:windowBackground">#1C1C1C</item>
+        <item name="android:navigationBarColor">#1C1C1C</item>
+        <item name="android:statusBarColor">#1C1C1C</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+    <style name="Theme.Mashwarak.Entry" parent="Theme.Mashwarak.EntryBase"/>
 </resources>

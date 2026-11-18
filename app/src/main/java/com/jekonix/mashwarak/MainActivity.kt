@@ -71,6 +71,13 @@ import com.google.firebase.messaging.FirebaseMessaging
 
 class MainActivity : AppCompatActivity() {
 
+    private val brandBackground = Color.rgb(28, 28, 28)
+    private val brandSurface = Color.rgb(41, 41, 41)
+    private val brandGold = Color.rgb(199, 160, 106)
+    private val brandText = Color.rgb(245, 245, 245)
+    private val brandMuted = Color.rgb(181, 181, 181)
+    private val brandBorder = Color.rgb(70, 70, 70)
+
     private lateinit var webView: WebView
     private lateinit var progress: ProgressBar
     private lateinit var splash: FrameLayout
@@ -256,11 +263,15 @@ class MainActivity : AppCompatActivity() {
         // We handle system bars explicitly so the app never starts behind
         // the clock/status icons.
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = Color.WHITE
-        window.navigationBarColor = Color.WHITE
+        window.statusBarColor = brandBackground
+        window.navigationBarColor = brandBackground
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
 
         root = FrameLayout(this).apply {
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(brandBackground)
         }
 
         webView = WebView(this)
@@ -287,11 +298,10 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        // Help avatar — restore the compact burgundy badge seen in the approved
-        // booking-screen screenshot. Use the EXISTING transparent PNG, not the
-        // old JPG with a visible white rectangular background.
+        // Help badge: updated monogram only; preserve the existing touch target,
+        // dimensions, margins and device-language positioning.
         helpButton = ImageView(this).apply {
-            setImageResource(R.drawable.mashwarak_support_avatar)
+            setImageResource(R.drawable.mashwarak_monogram)
             scaleType = ImageView.ScaleType.FIT_CENTER
             setPadding(0, 0, 0, 0)
             background = null
@@ -301,7 +311,7 @@ class MainActivity : AppCompatActivity() {
         }
         helpTouchTarget = FrameLayout(this).apply {
             background = roundedBackground(
-                color = Color.rgb(115, 31, 65),
+                color = brandBackground,
                 radiusDp = 20f
             )
             isClickable = true
@@ -319,7 +329,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(
             helpTouchTarget,
             FrameLayout.LayoutParams(dp(56), dp(66)).apply {
-                // Keep the approved compact burgundy avatar. The side is set
+                // Keep the approved compact badge. The side is set
                 // from the device language after the view has been attached.
                 gravity = Gravity.BOTTOM or Gravity.LEFT
                 leftMargin = dp(10)
@@ -1200,7 +1210,7 @@ class MainActivity : AppCompatActivity() {
     /** Match the native help badge to the device's RTL/LTR direction.
      * Arabic and other RTL device languages: bottom-right.
      * English and other LTR device languages: bottom-left.
-     * The icon size, burgundy shape, click handler and vertical offset remain unchanged.
+     * The icon size, shape, click handler and vertical offset remain unchanged.
      */
     private fun syncHelpBadgeWithDeviceLanguage() {
         if (!::helpTouchTarget.isInitialized) return
@@ -1228,7 +1238,7 @@ class MainActivity : AppCompatActivity() {
             layoutDirection = View.LAYOUT_DIRECTION_RTL
             setPadding(dp(16), dp(16), dp(16), dp(18))
             background = roundedBackground(
-                color = Color.WHITE,
+                color = brandBackground,
                 radiusDp = 20f
             )
         }
@@ -1236,7 +1246,7 @@ class MainActivity : AppCompatActivity() {
         val title = TextView(this).apply {
             text = "مساعدة"
             textSize = 20f
-            setTextColor(Color.rgb(55, 38, 45))
+            setTextColor(brandText)
             setTypeface(Typeface.DEFAULT, Typeface.BOLD)
             gravity = Gravity.RIGHT
         }
@@ -1251,7 +1261,7 @@ class MainActivity : AppCompatActivity() {
         val subtitle = TextView(this).apply {
             text = "اختار اللي محتاجه بدون ما نخاطر ببيانات طلبك."
             textSize = 11f
-            setTextColor(Color.rgb(121, 109, 114))
+            setTextColor(brandMuted)
             gravity = Gravity.RIGHT
         }
         sheet.addView(
@@ -1262,16 +1272,6 @@ class MainActivity : AppCompatActivity() {
             ).apply {
                 topMargin = dp(3)
                 bottomMargin = dp(12)
-            }
-        )
-
-        sheet.addView(
-            makeHelpOption(
-                "طريقة استخدام التطبيق",
-                "شغّل الشرح التفاعلي خطوة بخطوة"
-            ) {
-                dialog.dismiss()
-                startWebUsageTour()
             }
         )
 
@@ -1349,16 +1349,16 @@ class MainActivity : AppCompatActivity() {
             isFocusable = true
             setPadding(dp(13), dp(11), dp(13), dp(11))
             background = roundedBackground(
-                color = Color.rgb(250, 247, 248),
+                color = brandSurface,
                 radiusDp = 14f,
-                strokeColor = Color.rgb(232, 222, 225),
+                strokeColor = brandBorder,
                 strokeWidthDp = 1
             )
 
             val main = TextView(this@MainActivity).apply {
                 text = titleText
                 textSize = 14f
-                setTextColor(Color.rgb(111, 15, 42))
+                setTextColor(brandGold)
                 setTypeface(Typeface.DEFAULT, Typeface.BOLD)
                 gravity = Gravity.RIGHT
             }
@@ -1366,7 +1366,7 @@ class MainActivity : AppCompatActivity() {
             val sub = TextView(this@MainActivity).apply {
                 text = subtitleText
                 textSize = 10.5f
-                setTextColor(Color.rgb(124, 113, 118))
+                setTextColor(brandMuted)
                 gravity = Gravity.RIGHT
             }
 
@@ -1972,114 +1972,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun startWebUsageTour() {
-        if (!::webView.isInitialized) return
-
-        val installAndBroadcastJs = """
-            (function() {
-              try {
-                window.__mashwarakTourAck = false;
-
-                if (!window.__mashwarakTourAckInstalled) {
-                  window.__mashwarakTourAckInstalled = true;
-
-                  window.addEventListener('message', function(ev) {
-                    try {
-                      if (ev && ev.data && ev.data.type === 'mashwarak-tour-started') {
-                        window.__mashwarakTourAck = true;
-                      }
-                    } catch (e) {}
-                  });
-                }
-
-                window.__mashwarakBroadcastTour = function() {
-                  var message = { type: 'mashwarak-start-tour' };
-                  var sent = 0;
-                  var visited = [];
-
-                  function alreadyVisited(w) {
-                    for (var x = 0; x < visited.length; x++) {
-                      if (visited[x] === w) return true;
-                    }
-                    return false;
-                  }
-
-                  function broadcast(win, depth) {
-                    if (!win || depth > 12 || alreadyVisited(win)) return;
-
-                    visited.push(win);
-
-                    try {
-                      win.postMessage(message, '*');
-                      sent++;
-                    } catch (e) {}
-
-                    var count = 0;
-
-                    try {
-                      count = win.length || 0;
-                    } catch (e) {
-                      try {
-                        count = win.frames.length || 0;
-                      } catch (ignore) {
-                        count = 0;
-                      }
-                    }
-
-                    for (var i = 0; i < count; i++) {
-                      try {
-                        broadcast(win[i], depth + 1);
-                      } catch (e) {
-                        try {
-                          broadcast(win.frames[i], depth + 1);
-                        } catch (ignore) {}
-                      }
-                    }
-                  }
-
-                  broadcast(window, 0);
-                  return sent;
-                };
-
-                return window.__mashwarakBroadcastTour();
-              } catch (e) {
-                return -1;
-              }
-            })();
-        """.trimIndent()
-
-        webView.evaluateJavascript(installAndBroadcastJs) {
-            // Google Sites can nest the Apps Script app more than one iframe deep.
-            // Send a second pass after the frame tree has had time to receive the first one.
-            Handler(Looper.getMainLooper()).postDelayed({
-                webView.evaluateJavascript(
-                    "(function(){try{return window.__mashwarakBroadcastTour?window.__mashwarakBroadcastTour():-1}catch(e){return -1}})();",
-                    null
-                )
-            }, 280)
-
-            // Do not show a false success message. Confirm that the actual
-            // Mashwarak page acknowledged starting the walkthrough.
-            Handler(Looper.getMainLooper()).postDelayed({
-                webView.evaluateJavascript(
-                    "(function(){try{return window.__mashwarakTourAck===true}catch(e){return false}})();"
-                ) { result ->
-                    val started = result?.trim()?.equals("true", ignoreCase = true) == true
-
-                    Toast.makeText(
-                        this,
-                        if (started) {
-                            "تم فتح شرح الاستخدام"
-                        } else {
-                            "تعذر فتح الشرح الآن، جرّب مرة أخرى"
-                        },
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-            }, 950)
-        }
-    }
-
     private fun roundedBackground(
         color: Int,
         radiusDp: Float,
@@ -2124,7 +2016,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun buildSplash(): FrameLayout {
         val overlay = FrameLayout(this).apply {
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(brandBackground)
             elevation = dp(30).toFloat()
         }
 
@@ -2135,7 +2027,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val logo = ImageView(this).apply {
-            setImageResource(R.drawable.mashwarak_splash_logo)
+            setImageResource(R.drawable.mashwarak_monogram)
             scaleType = ImageView.ScaleType.FIT_CENTER
         }
 
@@ -2147,61 +2039,14 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        val title = TextView(this).apply {
-            text = "مشوارك"
-            textSize = 28f
-            setTextColor(Color.rgb(18, 38, 60))
-            gravity = Gravity.CENTER
-            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
-        }
-        content.addView(
-            title,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        )
-
-        val subtitle = TextView(this).apply {
-            text = "مشوارك لأي مكان في مصر"
-            textSize = 12f
-            setTextColor(Color.rgb(112, 120, 132))
-            gravity = Gravity.CENTER
-        }
-        content.addView(
-            subtitle,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = dp(6)
-                bottomMargin = dp(22)
-            }
-        )
-
         val spinner = ProgressBar(this).apply {
             isIndeterminate = true
+            indeterminateTintList = android.content.res.ColorStateList.valueOf(brandGold)
         }
         content.addView(
             spinner,
             LinearLayout.LayoutParams(dp(36), dp(36)).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
-            }
-        )
-
-        val loadingText = TextView(this).apply {
-            text = "جاري فتح مشوارك..."
-            textSize = 10f
-            setTextColor(Color.rgb(145, 150, 158))
-            gravity = Gravity.CENTER
-        }
-        content.addView(
-            loadingText,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = dp(10)
             }
         )
 
@@ -2300,17 +2145,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildNativeOfflineScreen(): FrameLayout {
-        val burgundy = Color.rgb(116, 33, 63)
-        val cream = Color.rgb(251, 245, 243)
-        val ink = Color.rgb(52, 40, 47)
-        val muted = Color.rgb(122, 108, 115)
+        val accent = brandGold
+        val screenBackground = brandBackground
+        val ink = brandText
+        val muted = brandMuted
         val cardBg = GradientDrawable().apply {
-            setColor(Color.WHITE)
+            setColor(brandSurface)
             cornerRadius = dp(26).toFloat()
-            setStroke(dp(1), Color.rgb(231, 218, 220))
+            setStroke(dp(1), brandBorder)
         }
         val overlay = FrameLayout(this).apply {
-            setBackgroundColor(cream)
+            setBackgroundColor(screenBackground)
             visibility = View.GONE
             isClickable = true
             isFocusable = true
@@ -2326,14 +2171,14 @@ class MainActivity : AppCompatActivity() {
         }
         val iconBadge = object : View(this) {
             private val mark = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = burgundy
+                color = accent
                 strokeWidth = dp(3).toFloat()
                 strokeCap = Paint.Cap.ROUND
                 style = Paint.Style.STROKE
             }
             init {
                 background = GradientDrawable().apply {
-                    setColor(Color.rgb(251, 239, 243))
+                    setColor(Color.rgb(56, 48, 37))
                     cornerRadius = dp(24).toFloat()
                 }
             }
@@ -2354,7 +2199,7 @@ class MainActivity : AppCompatActivity() {
             text = "مــشــوارك"
             textSize = 16f
             setTypeface(Typeface.DEFAULT, Typeface.BOLD)
-            setTextColor(burgundy)
+            setTextColor(accent)
             gravity = Gravity.CENTER
         }
         container.addView(brand, LinearLayout.LayoutParams(-1, dp(36)).apply { topMargin = dp(12) })
@@ -2378,10 +2223,10 @@ class MainActivity : AppCompatActivity() {
             text = "إعادة المحاولة"
             textSize = 16f
             gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
+            setTextColor(brandBackground)
             setTypeface(Typeface.DEFAULT, Typeface.BOLD)
             background = GradientDrawable().apply {
-                setColor(burgundy)
+                setColor(accent)
                 cornerRadius = dp(15).toFloat()
             }
             isClickable = true
@@ -2405,7 +2250,7 @@ class MainActivity : AppCompatActivity() {
             text = "إعدادات الإنترنت"
             textSize = 14f
             gravity = Gravity.CENTER
-            setTextColor(burgundy)
+            setTextColor(accent)
             isClickable = true
             isFocusable = true
             setOnClickListener {

@@ -15,6 +15,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -38,13 +39,18 @@ class OnboardingActivity : ComponentActivity() {
         const val KEY_COMPLETED = "completed_v4"
     }
 
-    private val wine = Color.rgb(116, 33, 63)
-    private val wineDark = Color.rgb(78, 22, 46)
-    private val ink = Color.rgb(42, 34, 42)
-    private val muted = Color.rgb(119, 105, 112)
+    private val backgroundColor = Color.rgb(28, 28, 28)
     private val gold = Color.rgb(199, 160, 106)
-    private val cream = Color.rgb(252, 246, 238)
-    private val border = Color.rgb(237, 219, 218)
+    private val goldLight = Color.rgb(232, 200, 149)
+    private val goldDark = Color.rgb(150, 113, 66)
+    private val ink = Color.rgb(245, 245, 245)
+    private val muted = Color.rgb(181, 181, 181)
+    private val surface = Color.rgb(41, 41, 41)
+    private val border = Color.rgb(70, 70, 70)
+    private val illustrationPanel = Color.rgb(32, 32, 32)
+    private val illustrationCell = Color.rgb(69, 65, 59)
+    private val illustrationGlass = Color.rgb(223, 215, 201)
+    private val wheel = Color.rgb(22, 22, 22)
     private var index = 0
     private var reviewMode = false
     private var startX = 0f
@@ -77,15 +83,17 @@ class OnboardingActivity : ComponentActivity() {
             }
         })
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = Color.WHITE
-        window.navigationBarColor = Color.WHITE
-        window.decorView.systemUiVisibility =
-            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        window.statusBarColor = backgroundColor
+        window.navigationBarColor = backgroundColor
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(backgroundColor)
         }
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
             val b = insets.getInsets(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
@@ -93,15 +101,26 @@ class OnboardingActivity : ComponentActivity() {
             insets
         }
 
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(22), dp(12), dp(22), dp(8))
+        // A centered brand group with symmetric space reserved for Skip.
+        // Using a FrameLayout makes the actual screen center independent of RTL.
+        val header = FrameLayout(this).apply {
+            setPadding(dp(12), dp(12), dp(12), dp(8))
         }
-        val brandGroup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        brandGroup.addView(label("مشوارك", 25f, wine, true))
+        val brandGroup = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+        brandGroup.addView(ImageView(this).apply {
+            setImageResource(R.drawable.mashwarak_monogram)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(dp(46), dp(34)).apply { bottomMargin = dp(4) })
+        brandGroup.addView(label("مشوارك", 25f, ink, true))
         brandGroup.addView(label("MASHWARAK", 10f, gold, true))
-        header.addView(brandGroup, LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(brandGroup, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply {
+            leftMargin = dp(68)
+            rightMargin = dp(68)
+        })
         skipButton = label("تخطي", 14f, muted, true).apply {
             gravity = Gravity.CENTER
             minWidth = dp(68)
@@ -111,8 +130,8 @@ class OnboardingActivity : ComponentActivity() {
             contentDescription = "تخطي التعريف والبدء"
             setOnClickListener { finishOnboarding() }
         }
-        header.addView(skipButton)
-        root.addView(header)
+        header.addView(skipButton, FrameLayout.LayoutParams(dp(68), -2, Gravity.LEFT or Gravity.CENTER_VERTICAL))
+        root.addView(header, LinearLayout.LayoutParams(-1, -2))
 
         val scroller = ScrollView(this).apply {
             isFillViewport = true
@@ -124,9 +143,9 @@ class OnboardingActivity : ComponentActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(22), dp(8), dp(22), dp(14))
         }
-        sectionLabel = label("", 13f, wine, true).apply {
+        sectionLabel = label("", 13f, gold, true).apply {
             gravity = Gravity.CENTER
-            background = rounded(cream, 18f, border)
+            background = rounded(surface, 18f, border)
             setPadding(dp(14), dp(8), dp(14), dp(8))
         }
         val labelRow = LinearLayout(this).apply { gravity = Gravity.CENTER }
@@ -173,10 +192,10 @@ class OnboardingActivity : ComponentActivity() {
         progressRow.addView(pageNumber)
         footer.addView(progressRow, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
 
-        nextButton = label("التالي", 17f, Color.WHITE, true).apply {
+        nextButton = label("التالي", 17f, backgroundColor, true).apply {
             gravity = Gravity.CENTER
             minHeight = dp(56)
-            background = rounded(wine, 16f)
+            background = rounded(gold, 16f)
             isClickable = true
             isFocusable = true
             setOnClickListener {
@@ -225,7 +244,7 @@ class OnboardingActivity : ComponentActivity() {
         repeat(slides.size) { n ->
             val active = n == index
             val dot = View(this).apply {
-                background = rounded(if (active) wine else Color.rgb(225, 218, 219), 8f)
+                background = rounded(if (active) gold else border, 8f)
                 contentDescription = "الشاشة ${n + 1}${if (active) " الحالية" else ""}"
                 isClickable = true
                 setOnClickListener { showPage(n) }
@@ -290,20 +309,20 @@ class OnboardingActivity : ComponentActivity() {
             c.drawPath(path,p);p.pathEffect=null;p.style=Paint.Style.FILL
         }
         private fun circlePin(c: Canvas,x:Float,y:Float,col:Int) {
-            circle(c,x,y,20f,col);circle(c,x,y,8f,Color.WHITE)
+            circle(c,x,y,20f,col);circle(c,x,y,8f,surface)
             val tail=Path().apply { moveTo(x-9f,y+15f);lineTo(x,y+32f);lineTo(x+9f,y+15f);close() }
             color(col);c.drawPath(tail,p)
         }
         private fun car(c: Canvas,x:Float,y:Float,s:Float,col:Int,van:Boolean=false,taxi:Boolean=false){
             c.save();c.translate(x,y);c.scale(s,s)
             rect(c,0f,29f,138f,39f,13f,col)
-            if(van){rect(c,19f,3f,96f,43f,12f,col);rect(c,30f,11f,34f,22f,5f,Color.rgb(232,245,248));rect(c,71f,11f,33f,22f,5f,Color.rgb(232,245,248))}
+            if(van){rect(c,19f,3f,96f,43f,12f,col);rect(c,30f,11f,34f,22f,5f,illustrationGlass);rect(c,71f,11f,33f,22f,5f,illustrationGlass)}
             else{val roof=Path().apply{moveTo(25f,32f);lineTo(44f,9f);lineTo(93f,9f);lineTo(115f,32f);close()};color(col);c.drawPath(roof,p)
-                val glass=Path().apply{moveTo(45f,15f);lineTo(88f,15f);lineTo(102f,32f);lineTo(34f,32f);close()};color(Color.rgb(229,239,245));c.drawPath(glass,p)}
-            circle(c,28f,68f,12f,ink);circle(c,107f,68f,12f,ink)
-            circle(c,28f,68f,5f,Color.WHITE);circle(c,107f,68f,5f,Color.WHITE)
-            rect(c,9f,43f,10f,8f,3f,Color.rgb(255,230,185))
-            if(taxi){rect(c,48f,0f,41f,14f,5f,gold);line(c,55f,7f,83f,7f,Color.WHITE,2f)}
+                val glass=Path().apply{moveTo(45f,15f);lineTo(88f,15f);lineTo(102f,32f);lineTo(34f,32f);close()};color(illustrationGlass);c.drawPath(glass,p)}
+            circle(c,28f,68f,12f,wheel);circle(c,107f,68f,12f,wheel)
+            circle(c,28f,68f,5f,goldLight);circle(c,107f,68f,5f,goldLight)
+            rect(c,9f,43f,10f,8f,3f,goldLight)
+            if(taxi){rect(c,48f,0f,41f,14f,5f,gold);line(c,55f,7f,83f,7f,surface,2f)}
             c.restore()
         }
         override fun onDraw(c: Canvas) {
@@ -312,59 +331,59 @@ class OnboardingActivity : ComponentActivity() {
             val s=min(width/designW,height/designH)
             c.save();c.translate((width-designW*s)/2f,(height-designH*s)/2f);c.scale(s,s)
             card.set(1f,1f,343f,283f)
-            color(cream); c.drawRoundRect(card,29f,29f,p)
+            color(illustrationPanel); c.drawRoundRect(card,29f,29f,p)
             outline(c,1f,1f,342f,282f,29f,border,1.3f)
-            circle(c,290f,45f,33f,Color.rgb(249,232,218))
-            circle(c,54f,235f,27f,Color.rgb(247,232,238))
+            circle(c,290f,45f,33f,Color.rgb(62, 51, 36))
+            circle(c,54f,235f,27f,Color.rgb(49, 43, 35))
             when(page) {
                 0 -> {
                     // Planned trip: calendar + clock + visual route.
-                    rect(c,87f,42f,170f,188f,19f,Color.WHITE)
+                    rect(c,87f,42f,170f,188f,19f,surface)
                     outline(c,87f,42f,170f,188f,19f,border)
-                    rect(c,87f,42f,170f,54f,18f,wine)
-                    rect(c,87f,78f,170f,18f,0f,wine)
-                    line(c,133f,30f,133f,56f,gold,8f);line(c,211f,30f,211f,56f,gold,8f)
-                    repeat(3){row -> repeat(3){col -> rect(c,112f+col*44,113f+row*30,28f,18f,6f,if(row==1&&col==1)gold else Color.rgb(242,232,232))} }
-                    circle(c,252f,204f,44f,Color.WHITE);outline(c,210f,162f,84f,84f,42f,wine,4f)
-                    line(c,252f,204f,252f,182f,wine,5f);line(c,252f,204f,268f,210f,wine,5f)
-                    circle(c,252f,204f,4f,wine)
-                    circlePin(c,74f,199f,wine);circlePin(c,315f,126f,gold)
+                    rect(c,87f,42f,170f,54f,18f,gold)
+                    rect(c,87f,78f,170f,18f,0f,gold)
+                    line(c,133f,30f,133f,56f,goldLight,8f);line(c,211f,30f,211f,56f,goldLight,8f)
+                    repeat(3){row -> repeat(3){col -> rect(c,112f+col*44,113f+row*30,28f,18f,6f,if(row==1&&col==1)gold else illustrationCell)} }
+                    circle(c,252f,204f,44f,surface);outline(c,210f,162f,84f,84f,42f,gold,4f)
+                    line(c,252f,204f,252f,182f,gold,5f);line(c,252f,204f,268f,210f,gold,5f)
+                    circle(c,252f,204f,4f,gold)
+                    circlePin(c,74f,199f,gold);circlePin(c,315f,126f,gold)
                     val r=Path().apply{moveTo(74f,230f);cubicTo(112f,267f,164f,255f,196f,226f)}
-                    path(c,r,wine,4f,true)
+                    path(c,r,gold,4f,true)
                 }
                 1 -> {
                     // Origin and destination via map, plus car.
-                    repeat(4){i -> line(c,42f,48f+i*45f,302f,48f+i*45f,Color.rgb(234,222,218),2f)}
-                    repeat(5){i -> line(c,60f+i*52f,32f,60f+i*52f,243f,Color.rgb(234,222,218),2f)}
+                    repeat(4){i -> line(c,42f,48f+i*45f,302f,48f+i*45f,border,2f)}
+                    repeat(5){i -> line(c,60f+i*52f,32f,60f+i*52f,243f,border,2f)}
                     val route=Path().apply{moveTo(90f,183f);cubicTo(145f,224f,143f,82f,223f,100f);cubicTo(259f,108f,263f,139f,286f,131f)}
-                    path(c,route,wine,6f,true)
-                    circlePin(c,90f,168f,wine);circlePin(c,284f,115f,gold)
-                    rect(c,127f,205f,151f,49f,16f,Color.WHITE);outline(c,127f,205f,151f,49f,16f,border)
-                    car(c,144f,208f,.90f,wineDark)
+                    path(c,route,gold,6f,true)
+                    circlePin(c,90f,168f,gold);circlePin(c,284f,115f,gold)
+                    rect(c,127f,205f,151f,49f,16f,surface);outline(c,127f,205f,151f,49f,16f,border)
+                    car(c,144f,208f,.90f,goldDark)
                 }
                 2 -> {
                     // Scheduled date and estimate shown visually.
-                    rect(c,44f,45f,252f,187f,19f,Color.WHITE);outline(c,44f,45f,252f,187f,19f,border)
-                    rect(c,44f,45f,252f,45f,17f,wine)
-                    rect(c,44f,74f,252f,16f,0f,wine)
-                    line(c,96f,34f,96f,58f,gold,7f);line(c,245f,34f,245f,58f,gold,7f)
-                    repeat(3){row -> repeat(5){col -> rect(c,65f+col*45f,106f+row*35f,31f,24f,7f,if(row==1&&col==3)gold else Color.rgb(245,236,236))} }
-                    rect(c,144f,207f,143f,42f,15f,wine)
-                    color(Color.WHITE);p.textSize=22f;p.typeface=Typeface.create("sans-serif",Typeface.BOLD)
+                    rect(c,44f,45f,252f,187f,19f,surface);outline(c,44f,45f,252f,187f,19f,border)
+                    rect(c,44f,45f,252f,45f,17f,gold)
+                    rect(c,44f,74f,252f,16f,0f,gold)
+                    line(c,96f,34f,96f,58f,goldLight,7f);line(c,245f,34f,245f,58f,goldLight,7f)
+                    repeat(3){row -> repeat(5){col -> rect(c,65f+col*45f,106f+row*35f,31f,24f,7f,if(row==1&&col==3)gold else illustrationCell)} }
+                    rect(c,144f,207f,143f,42f,15f,gold)
+                    color(surface);p.textSize=22f;p.typeface=Typeface.create("sans-serif",Typeface.BOLD)
                     c.drawText("10:30",176f,235f,p)
-                    circle(c,104f,230f,29f,Color.WHITE);outline(c,77f,203f,54f,54f,27f,gold,3f)
-                    line(c,104f,230f,104f,214f,wine,4f);line(c,104f,230f,115f,235f,wine,4f)
+                    circle(c,104f,230f,29f,surface);outline(c,77f,203f,54f,54f,27f,gold,3f)
+                    line(c,104f,230f,104f,214f,gold,4f);line(c,104f,230f,115f,235f,gold,4f)
                 }
                 else -> {
                     // Three permitted captain vehicle types.
-                    rect(c,30f,66f,284f,162f,22f,Color.WHITE);outline(c,30f,66f,284f,162f,22f,border)
-                    rect(c,52f,89f,240f,24f,11f,Color.rgb(251,243,235))
-                    car(c,49f,141f,.70f,wine)
-                    car(c,132f,129f,.72f,wineDark,true)
-                    car(c,228f,150f,.48f,Color.rgb(64,82,103),false,true)
+                    rect(c,30f,66f,284f,162f,22f,surface);outline(c,30f,66f,284f,162f,22f,border)
+                    rect(c,52f,89f,240f,24f,11f,illustrationCell)
+                    car(c,49f,141f,.70f,gold)
+                    car(c,132f,129f,.72f,goldDark,true)
+                    car(c,228f,150f,.48f,goldLight,false,true)
                     circle(c,172f,72f,27f,gold)
-                    line(c,161f,73f,170f,82f,Color.WHITE,5f)
-                    line(c,170f,82f,185f,61f,Color.WHITE,5f)
+                    line(c,161f,73f,170f,82f,surface,5f)
+                    line(c,170f,82f,185f,61f,surface,5f)
                 }
             }
             c.restore()

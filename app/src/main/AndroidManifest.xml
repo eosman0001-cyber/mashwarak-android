@@ -47,11 +47,13 @@
 
         <activity
             android:name=".OnboardingActivity"
+            android:theme="@style/Theme.Mashwarak.Entry"
             android:screenOrientation="portrait"
             android:exported="false"/>
 
         <activity
             android:name=".MainActivity"
+            android:theme="@style/Theme.Mashwarak.Entry"
             android:screenOrientation="portrait"
             android:launchMode="singleTop"
             android:exported="true">
