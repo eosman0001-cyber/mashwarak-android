@@ -2131,7 +2131,7 @@ class MainActivity : AppCompatActivity() {
     // precedes this view; thereafter a full-screen map skeleton stays visible
     // until the WebView page has a real UI to show. No text or loading card.
     private fun buildSplash(): FrameLayout {
-        val background = Color.rgb(34, 35, 34)
+        val mapBackgroundColor = Color.rgb(34, 35, 34)
         val surface = Color.rgb(46, 46, 44)
         val skeleton = Color.rgb(60, 60, 57)
         val gold = Color.rgb(199, 160, 106)
@@ -2143,7 +2143,7 @@ class MainActivity : AppCompatActivity() {
             }
 
         val overlay = FrameLayout(this).apply {
-            setBackgroundColor(background)
+            setBackgroundColor(mapBackgroundColor)
             elevation = dp(30).toFloat()
             clipChildren = true
         }
