@@ -71,6 +71,19 @@ import com.google.firebase.messaging.FirebaseMessaging
 
 class MainActivity : AppCompatActivity() {
 
+    // 18 Nov approved Mashwarak palette. This file retains the current Cloud-ready flow.
+    private val brandBackground = Color.rgb(28, 28, 28)
+    private val brandSurface = Color.rgb(41, 41, 41)
+    private val brandGold = Color.rgb(199, 160, 106)
+    private val brandText = Color.rgb(245, 245, 245)
+    private val brandMuted = Color.rgb(181, 181, 181)
+    private val brandBorder = Color.rgb(70, 70, 70)
+
+    // V344.3.3: moving native map skeleton (not a logo + spinner).
+    private var splashShimmerAnimator: android.animation.ValueAnimator? = null
+    private var splashShimmerPhase = -1f
+    private val splashShimmerTiles = mutableListOf<View>()
+
     private lateinit var webView: WebView
     private lateinit var progress: ProgressBar
     private lateinit var splash: FrameLayout
@@ -256,16 +269,19 @@ class MainActivity : AppCompatActivity() {
         // We handle system bars explicitly so the app never starts behind
         // the clock/status icons.
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = Color.WHITE
-        window.navigationBarColor = Color.WHITE
+        window.statusBarColor = brandBackground
+        window.navigationBarColor = brandBackground
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
 
         root = FrameLayout(this).apply {
-            // Avoid a white first frame before the web app finishes rendering.
-            setBackgroundColor(Color.rgb(28, 28, 28))
+            setBackgroundColor(brandBackground)
         }
 
         webView = WebView(this).apply {
-            setBackgroundColor(Color.rgb(28, 28, 28))
+            setBackgroundColor(brandBackground)
         }
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
@@ -290,11 +306,10 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        // Help avatar — restore the compact burgundy badge seen in the approved
-        // booking-screen screenshot. Use the EXISTING transparent PNG, not the
-        // old JPG with a visible white rectangular background.
+        // Approved 18 Nov M monogram: preserve the existing badge dimensions,
+        // tap target, margins and device-language positioning exactly.
         helpButton = ImageView(this).apply {
-            setImageResource(R.drawable.mashwarak_support_avatar)
+            setImageResource(R.drawable.mashwarak_monogram)
             scaleType = ImageView.ScaleType.FIT_CENTER
             setPadding(0, 0, 0, 0)
             background = null
@@ -304,7 +319,7 @@ class MainActivity : AppCompatActivity() {
         }
         helpTouchTarget = FrameLayout(this).apply {
             background = roundedBackground(
-                color = Color.rgb(115, 31, 65),
+                color = brandBackground,
                 radiusDp = 20f
             )
             isClickable = true
@@ -322,7 +337,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(
             helpTouchTarget,
             FrameLayout.LayoutParams(dp(56), dp(66)).apply {
-                // Keep the approved compact burgundy avatar. The side is set
+                // Keep the approved gold M monogram. The side is set
                 // from the device language after the view has been attached.
                 gravity = Gravity.BOTTOM or Gravity.LEFT
                 leftMargin = dp(10)
@@ -349,6 +364,7 @@ class MainActivity : AppCompatActivity() {
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
         ))
         setContentView(root)
+        startSplashShimmer()
 
         if (BuildConfig.DIRECT_UPDATES) ContextCompat.registerReceiver(
             this,
@@ -1205,7 +1221,7 @@ class MainActivity : AppCompatActivity() {
     /** Match the native help badge to the device's RTL/LTR direction.
      * Arabic and other RTL device languages: bottom-right.
      * English and other LTR device languages: bottom-left.
-     * The icon size, burgundy shape, click handler and vertical offset remain unchanged.
+     * The icon size, shape, click handler and vertical offset remain unchanged.
      */
     private fun syncHelpBadgeWithDeviceLanguage() {
         if (!::helpTouchTarget.isInitialized) return
@@ -1233,7 +1249,7 @@ class MainActivity : AppCompatActivity() {
             layoutDirection = View.LAYOUT_DIRECTION_RTL
             setPadding(dp(16), dp(16), dp(16), dp(18))
             background = roundedBackground(
-                color = Color.WHITE,
+                color = brandBackground,
                 radiusDp = 20f
             )
         }
@@ -1241,7 +1257,7 @@ class MainActivity : AppCompatActivity() {
         val title = TextView(this).apply {
             text = "مساعدة"
             textSize = 20f
-            setTextColor(Color.rgb(55, 38, 45))
+            setTextColor(brandText)
             setTypeface(Typeface.DEFAULT, Typeface.BOLD)
             gravity = Gravity.RIGHT
         }
@@ -1256,7 +1272,7 @@ class MainActivity : AppCompatActivity() {
         val subtitle = TextView(this).apply {
             text = "اختار اللي محتاجه بدون ما نخاطر ببيانات طلبك."
             textSize = 11f
-            setTextColor(Color.rgb(121, 109, 114))
+            setTextColor(brandMuted)
             gravity = Gravity.RIGHT
         }
         sheet.addView(
@@ -1354,16 +1370,16 @@ class MainActivity : AppCompatActivity() {
             isFocusable = true
             setPadding(dp(13), dp(11), dp(13), dp(11))
             background = roundedBackground(
-                color = Color.rgb(250, 247, 248),
+                color = brandSurface,
                 radiusDp = 14f,
-                strokeColor = Color.rgb(232, 222, 225),
+                strokeColor = brandBorder,
                 strokeWidthDp = 1
             )
 
             val main = TextView(this@MainActivity).apply {
                 text = titleText
                 textSize = 14f
-                setTextColor(Color.rgb(111, 15, 42))
+                setTextColor(brandGold)
                 setTypeface(Typeface.DEFAULT, Typeface.BOLD)
                 gravity = Gravity.RIGHT
             }
@@ -1371,7 +1387,7 @@ class MainActivity : AppCompatActivity() {
             val sub = TextView(this@MainActivity).apply {
                 text = subtitleText
                 textSize = 10.5f
-                setTextColor(Color.rgb(124, 113, 118))
+                setTextColor(brandMuted)
                 gravity = Gravity.RIGHT
             }
 
@@ -2127,35 +2143,92 @@ class MainActivity : AppCompatActivity() {
         }, 700)
     }
 
-    // V344.3 | Native first-paint placeholder. The system launch icon/logo
-    // precedes this view; thereafter a full-screen map skeleton stays visible
-    // until the WebView page has a real UI to show. No text or loading card.
-    private fun buildSplash(): FrameLayout {
-        val mapBackgroundColor = Color.rgb(34, 35, 34)
-        val surface = Color.rgb(46, 46, 44)
-        val skeleton = Color.rgb(60, 60, 57)
-        val gold = Color.rgb(199, 160, 106)
+    // V344.3.3 | Native map skeleton. No redundant logo/spinner or text.
+    // Animated tiles use one lifecycle-managed ValueAnimator; nothing polls Cloud.
+    private fun skeletonTile(radiusDp: Int): View {
+        val tile = object : View(this) {
+            private val brush = Paint(Paint.ANTI_ALIAS_FLAG)
+            private val matrix = android.graphics.Matrix()
+            private var gradient: android.graphics.LinearGradient? = null
 
-        fun rounded(color: Int, radiusDp: Float): GradientDrawable =
+            override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+                super.onSizeChanged(w, h, oldw, oldh)
+                if (w <= 0) return
+                gradient = android.graphics.LinearGradient(
+                    -w.toFloat(), 0f, w.toFloat(), 0f,
+                    intArrayOf(Color.rgb(59, 60, 57), Color.rgb(104, 102, 92), Color.rgb(59, 60, 57)),
+                    floatArrayOf(0f, 0.5f, 1f),
+                    android.graphics.Shader.TileMode.CLAMP
+                )
+            }
+
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val w = width.toFloat()
+                val h = height.toFloat()
+                if (w <= 0f || h <= 0f) return
+                val currentGradient = gradient ?: return
+                matrix.setTranslate(splashShimmerPhase * w, 0f)
+                currentGradient.setLocalMatrix(matrix)
+                brush.shader = currentGradient
+                val radius = dp(radiusDp).toFloat()
+                canvas.drawRoundRect(0f, 0f, w, h, radius, radius, brush)
+                brush.shader = null
+            }
+        }
+        splashShimmerTiles.add(tile)
+        return tile
+    }
+
+    private fun startSplashShimmer() {
+        if (splashShimmerAnimator?.isRunning == true) return
+        splashShimmerAnimator?.cancel()
+        splashShimmerAnimator = android.animation.ValueAnimator.ofFloat(-1f, 1f).apply {
+            duration = 1550L
+            repeatCount = android.animation.ValueAnimator.INFINITE
+            repeatMode = android.animation.ValueAnimator.RESTART
+            interpolator = android.view.animation.LinearInterpolator()
+            addUpdateListener { frame ->
+                splashShimmerPhase = frame.animatedValue as Float
+                splashShimmerTiles.forEach { it.invalidate() }
+            }
+            start()
+        }
+    }
+
+    private fun stopSplashShimmer() {
+        splashShimmerAnimator?.cancel()
+        splashShimmerAnimator = null
+    }
+
+    private fun buildSplash(): FrameLayout {
+        splashShimmerTiles.clear()
+        val roadColor = Color.rgb(55, 57, 53)
+        val surface = brandSurface
+
+        fun rounded(color: Int, radiusDp: Int): GradientDrawable =
             GradientDrawable().apply {
                 setColor(color)
-                cornerRadius = dp(radiusDp.toInt()).toFloat()
+                cornerRadius = dp(radiusDp).toFloat()
             }
 
         val overlay = FrameLayout(this).apply {
-            setBackgroundColor(mapBackgroundColor)
+            setBackgroundColor(brandBackground)
             elevation = dp(30).toFloat()
             clipChildren = true
+            isClickable = true
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
 
-        // Quiet street silhouettes instead of an empty white WebView.
+        // Same native map-like layout as V344.3, with no drawn words.
         arrayOf(
             Triple(-22f, -215, 90),
             Triple(32f, 75, 155),
             Triple(-37f, 0, -70)
         ).forEach { (angle, dx, dy) ->
             val road = View(this).apply {
-                setBackgroundColor(Color.rgb(55, 57, 53))
+                setBackgroundColor(roadColor)
                 rotation = angle
                 alpha = 0.55f
                 translationX = dp(dx).toFloat()
@@ -2170,10 +2243,8 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val avatar = View(this).apply { background = rounded(skeleton, 13f) }
-        upper.addView(avatar, LinearLayout.LayoutParams(dp(44), dp(44)))
-        val search = View(this).apply { background = rounded(skeleton, 14f) }
-        upper.addView(search, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+        upper.addView(skeletonTile(13), LinearLayout.LayoutParams(dp(44), dp(44)))
+        upper.addView(skeletonTile(14), LinearLayout.LayoutParams(0, dp(44), 1f).apply {
             marginStart = dp(10)
         })
         overlay.addView(upper, FrameLayout.LayoutParams(
@@ -2188,7 +2259,7 @@ class MainActivity : AppCompatActivity() {
         val marker = View(this).apply {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(gold)
+                setColor(brandGold)
             }
             elevation = dp(2).toFloat()
         }
@@ -2199,12 +2270,12 @@ class MainActivity : AppCompatActivity() {
         val lower = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(16))
-            background = rounded(surface, 20f)
+            background = rounded(surface, 20)
         }
-        lower.addView(View(this).apply { background = rounded(skeleton, 9f) },
-            LinearLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(18)))
-        lower.addView(View(this).apply { background = rounded(skeleton, 11f) },
-            LinearLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(42)).apply {
+        lower.addView(skeletonTile(9), LinearLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, dp(18)))
+        lower.addView(skeletonTile(11), LinearLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, dp(42)).apply {
                 topMargin = dp(11)
             })
         overlay.addView(lower, FrameLayout.LayoutParams(
@@ -2287,9 +2358,10 @@ class MainActivity : AppCompatActivity() {
         offlineScreen.alpha = 1f
         offlineScreen.bringToFront()
         progress.visibility = View.GONE
-        // An animated splash must never uncover Chrome's network error page.
+        // The offline layer covers the WebView. Stop skeleton animation while hidden.
         splash.animate().cancel()
         splash.visibility = View.GONE
+        stopSplashShimmer()
     }
 
     private fun hideNativeOfflineScreen() {
@@ -2300,17 +2372,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildNativeOfflineScreen(): FrameLayout {
-        val burgundy = Color.rgb(116, 33, 63)
-        val cream = Color.rgb(251, 245, 243)
-        val ink = Color.rgb(52, 40, 47)
-        val muted = Color.rgb(122, 108, 115)
+        val accent = brandGold
+        val screenBackground = brandBackground
+        val ink = brandText
+        val muted = brandMuted
         val cardBg = GradientDrawable().apply {
-            setColor(Color.WHITE)
+            setColor(brandSurface)
             cornerRadius = dp(26).toFloat()
-            setStroke(dp(1), Color.rgb(231, 218, 220))
+            setStroke(dp(1), brandBorder)
         }
         val overlay = FrameLayout(this).apply {
-            setBackgroundColor(cream)
+            setBackgroundColor(screenBackground)
             visibility = View.GONE
             isClickable = true
             isFocusable = true
@@ -2326,14 +2398,14 @@ class MainActivity : AppCompatActivity() {
         }
         val iconBadge = object : View(this) {
             private val mark = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = burgundy
+                color = accent
                 strokeWidth = dp(3).toFloat()
                 strokeCap = Paint.Cap.ROUND
                 style = Paint.Style.STROKE
             }
             init {
                 background = GradientDrawable().apply {
-                    setColor(Color.rgb(251, 239, 243))
+                    setColor(Color.rgb(56, 48, 37))
                     cornerRadius = dp(24).toFloat()
                 }
             }
@@ -2354,7 +2426,7 @@ class MainActivity : AppCompatActivity() {
             text = "مــشــوارك"
             textSize = 16f
             setTypeface(Typeface.DEFAULT, Typeface.BOLD)
-            setTextColor(burgundy)
+            setTextColor(accent)
             gravity = Gravity.CENTER
         }
         container.addView(brand, LinearLayout.LayoutParams(-1, dp(36)).apply { topMargin = dp(12) })
@@ -2378,10 +2450,10 @@ class MainActivity : AppCompatActivity() {
             text = "إعادة المحاولة"
             textSize = 16f
             gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
+            setTextColor(brandBackground)
             setTypeface(Typeface.DEFAULT, Typeface.BOLD)
             background = GradientDrawable().apply {
-                setColor(burgundy)
+                setColor(accent)
                 cornerRadius = dp(15).toFloat()
             }
             isClickable = true
@@ -2405,7 +2477,7 @@ class MainActivity : AppCompatActivity() {
             text = "إعدادات الإنترنت"
             textSize = 14f
             gravity = Gravity.CENTER
-            setTextColor(burgundy)
+            setTextColor(accent)
             isClickable = true
             isFocusable = true
             setOnClickListener {
@@ -2432,9 +2504,11 @@ class MainActivity : AppCompatActivity() {
                 showNativeOfflineScreen(!isInternetAvailable())
             }
         }, 25000)
+        splash.animate().cancel()
         splash.alpha = 1f
         splash.visibility = View.VISIBLE
         splash.bringToFront()
+        startSplashShimmer()
     }
 
     private fun hideSplash() {
@@ -2445,6 +2519,7 @@ class MainActivity : AppCompatActivity() {
             .withEndAction {
                 splash.visibility = View.GONE
                 splash.alpha = 1f
+                stopSplashShimmer()
             }
             .start()
     }
@@ -2755,6 +2830,7 @@ class MainActivity : AppCompatActivity() {
         (value * resources.displayMetrics.density).toInt()
 
     override fun onDestroy() {
+        stopSplashShimmer()
         if (networkObserverRegistered) {
             runCatching { connectivity.unregisterNetworkCallback(connectivityObserver) }
             networkObserverRegistered = false
