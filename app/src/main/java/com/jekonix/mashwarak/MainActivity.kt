@@ -83,6 +83,11 @@ class MainActivity : AppCompatActivity() {
     private var splashShimmerAnimator: android.animation.ValueAnimator? = null
     private var splashShimmerPhase = -1f
     private val splashShimmerTiles = mutableListOf<View>()
+    // The approved opening is M + circular loader, THEN the existing moving Skeleton.
+    private lateinit var splashIntro: FrameLayout
+    private var splashIntroScheduled = false
+    private var splashIntroCompleted = false
+    private var splashHideRequestedDuringIntro = false
 
     private lateinit var webView: WebView
     private lateinit var progress: ProgressBar
@@ -127,6 +132,9 @@ class MainActivity : AppCompatActivity() {
     private var pageShown = false
     private var nativeLocationRunning = false
     private var locationGeneration = 0
+    // Captain coordinates return over the scoped Android bridge, not iframe geolocation.
+    private var pendingCaptainLocationReply: androidx.webkit.JavaScriptReplyProxy? = null
+    private var pendingCaptainLocationRequestId: String = ""
     private val lifecycleHandler = Handler(Looper.getMainLooper())
     private val trustedFrameOrigins by lazy { BuildConfig.WEB_APP_ORIGINS.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet() }
     private var openNotificationsAfterLoad = false
@@ -218,8 +226,14 @@ class MainActivity : AppCompatActivity() {
 
         if (pendingNativeLocationRequest) {
             pendingNativeLocationRequest = false
-            if (granted) requestNativeCurrentLocationNow()
-            else broadcastNativeLocationError("لم يتم السماح باستخدام الموقع")
+            if (granted && pendingCaptainLocationReply != null &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
+            ) {
+                deliverCaptainLocationError("PRECISE_LOCATION_REQUIRED", "فعّل الموقع الدقيق في صلاحيات مشوارك")
+            } else if (granted) requestNativeCurrentLocationNow()
+            else if (pendingCaptainLocationReply != null) {
+                deliverCaptainLocationError("LOCATION_PERMISSION_DENIED", "السماح بالموقع غير مفعّل لمشوارك")
+            } else broadcastNativeLocationError("لم يتم السماح باستخدام الموقع")
         }
     }
 
@@ -365,6 +379,7 @@ class MainActivity : AppCompatActivity() {
         ))
         setContentView(root)
         startSplashShimmer()
+        beginSplashIntro()
 
         if (BuildConfig.DIRECT_UPDATES) ContextCompat.registerReceiver(
             this,
@@ -857,7 +872,26 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun requestNativeCurrentLocation() {
+    private fun requestNativeCurrentLocation(
+        captainReply: androidx.webkit.JavaScriptReplyProxy? = null,
+        captainRequestId: String = ""
+    ) {
+        // There is one native location operation; never mix two callers' replies.
+        if (nativeLocationRunning || pendingNativeLocationRequest) {
+            if (captainReply != null) {
+                val busyReply = JSONObject()
+                    .put("action", "captainLocationV1")
+                    .put("requestId", captainRequestId)
+                    .put("success", false)
+                    .put("errorCode", "LOCATION_BUSY")
+                runCatching { captainReply.postMessage(busyReply.toString()) }
+            }
+            return
+        }
+        if (captainReply != null) {
+            pendingCaptainLocationReply = captainReply
+            pendingCaptainLocationRequestId = captainRequestId
+        }
         val fine = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.ACCESS_FINE_LOCATION
@@ -867,7 +901,9 @@ class MainActivity : AppCompatActivity() {
             Manifest.permission.ACCESS_COARSE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
 
-        if (fine || coarse) {
+        if (captainReply != null && !fine && coarse) {
+            deliverCaptainLocationError("PRECISE_LOCATION_REQUIRED", "فعّل الموقع الدقيق في صلاحيات مشوارك")
+        } else if (fine || coarse) {
             requestNativeCurrentLocationNow()
         } else {
             pendingNativeLocationRequest = true
@@ -899,8 +935,7 @@ class MainActivity : AppCompatActivity() {
             timeoutHandler.removeCallbacksAndMessages(null)
             if (isDestroyed || isFinishing || generation != locationGeneration) return
             if (isUsableLocation(location)) {
-                broadcastNativeCurrentLocation(location!!)
-                reverseGeocodeAndBroadcast(location!!)
+                deliverNativeLocation(location!!)
             } else {
                 fallbackLocationManager()
             }
@@ -911,7 +946,8 @@ class MainActivity : AppCompatActivity() {
                 cached = last?.takeIf { isUsableLocation(it) }
                 if (last != null) {
                     val age = System.currentTimeMillis() - last.time
-                    if (age in 0..120_000L && last.accuracy <= 120f) {
+                    val freshEnough = if (pendingCaptainLocationReply != null) 60_000L else 120_000L
+                    if (age in 0..freshEnough && last.accuracy <= 120f) {
                         finish(last)
                         return@addOnSuccessListener
                     }
@@ -938,11 +974,56 @@ class MainActivity : AppCompatActivity() {
             if (isUsableLocation(loc) && (best == null || loc!!.time > (best?.time ?: 0L))) best = loc
         }
         if (best != null) {
-            broadcastNativeCurrentLocation(best!!)
-            reverseGeocodeAndBroadcast(best!!)
+            deliverNativeLocation(best!!)
         } else {
-            broadcastNativeLocationError("شغّل GPS وحاول مرة أخرى")
+            val enabled = providers.isNotEmpty()
+            if (pendingCaptainLocationReply != null) {
+                deliverCaptainLocationError(
+                    if (enabled) "LOCATION_UNAVAILABLE" else "LOCATION_SERVICES_OFF",
+                    if (enabled) "تعذر قراءة موقع دقيق، جرّب في مكان مفتوح" else "شغّل خدمة الموقع من إعدادات الهاتف"
+                )
+            } else broadcastNativeLocationError("شغّل GPS وحاول مرة أخرى")
         }
+    }
+
+    private fun deliverNativeLocation(location: Location) {
+        if (pendingCaptainLocationReply != null) {
+            val age = System.currentTimeMillis() - location.time
+            if (age !in 0L..90_000L) {
+                deliverCaptainLocationError("LOCATION_STALE", "آخر موقع قديم؛ شغّل الموقع وحاول مرة أخرى")
+                return
+            }
+            val reply = pendingCaptainLocationReply ?: return
+            val requestId = pendingCaptainLocationRequestId
+            pendingCaptainLocationReply = null
+            pendingCaptainLocationRequestId = ""
+            val data = JSONObject()
+                .put("action", "captainLocationV1")
+                .put("requestId", requestId)
+                .put("success", true)
+                .put("lat", location.latitude)
+                .put("lng", location.longitude)
+                .put("accuracy", location.accuracy.toDouble())
+                .put("measuredAt", location.time)
+            runCatching { reply.postMessage(data.toString()) }
+        } else {
+            broadcastNativeCurrentLocation(location)
+            reverseGeocodeAndBroadcast(location)
+        }
+    }
+
+    private fun deliverCaptainLocationError(code: String, message: String) {
+        val reply = pendingCaptainLocationReply ?: return
+        val requestId = pendingCaptainLocationRequestId
+        pendingCaptainLocationReply = null
+        pendingCaptainLocationRequestId = ""
+        val data = JSONObject()
+            .put("action", "captainLocationV1")
+            .put("requestId", requestId)
+            .put("success", false)
+            .put("errorCode", code)
+            .put("message", message)
+        runCatching { reply.postMessage(data.toString()) }
     }
 
     private fun broadcastNativeCurrentLocation(location: Location) {
@@ -1288,16 +1369,6 @@ class MainActivity : AppCompatActivity() {
 
         sheet.addView(
             makeHelpOption(
-                "طريقة استخدام التطبيق",
-                "شغّل الشرح التفاعلي خطوة بخطوة"
-            ) {
-                dialog.dismiss()
-                startWebUsageTour()
-            }
-        )
-
-        sheet.addView(
-            makeHelpOption(
                 "عن مشوارك",
                 "مشاوير مخططة وطرق طلب الرحلة والانضمام ككابتن"
             ) {
@@ -1327,16 +1398,6 @@ class MainActivity : AppCompatActivity() {
             ) {
                 dialog.dismiss()
                 showUpdateCenter()
-            }
-        )
-
-        sheet.addView(
-            makeHelpOption(
-                "تحديث الصفحة",
-                "التحديث لا يتم إلا بعد تأكيد منك"
-            ) {
-                dialog.dismiss()
-                showRefreshConfirmation()
             }
         )
 
@@ -1993,114 +2054,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun startWebUsageTour() {
-        if (!::webView.isInitialized) return
-
-        val installAndBroadcastJs = """
-            (function() {
-              try {
-                window.__mashwarakTourAck = false;
-
-                if (!window.__mashwarakTourAckInstalled) {
-                  window.__mashwarakTourAckInstalled = true;
-
-                  window.addEventListener('message', function(ev) {
-                    try {
-                      if (ev && ev.data && ev.data.type === 'mashwarak-tour-started') {
-                        window.__mashwarakTourAck = true;
-                      }
-                    } catch (e) {}
-                  });
-                }
-
-                window.__mashwarakBroadcastTour = function() {
-                  var message = { type: 'mashwarak-start-tour' };
-                  var sent = 0;
-                  var visited = [];
-
-                  function alreadyVisited(w) {
-                    for (var x = 0; x < visited.length; x++) {
-                      if (visited[x] === w) return true;
-                    }
-                    return false;
-                  }
-
-                  function broadcast(win, depth) {
-                    if (!win || depth > 12 || alreadyVisited(win)) return;
-
-                    visited.push(win);
-
-                    try {
-                      win.postMessage(message, '*');
-                      sent++;
-                    } catch (e) {}
-
-                    var count = 0;
-
-                    try {
-                      count = win.length || 0;
-                    } catch (e) {
-                      try {
-                        count = win.frames.length || 0;
-                      } catch (ignore) {
-                        count = 0;
-                      }
-                    }
-
-                    for (var i = 0; i < count; i++) {
-                      try {
-                        broadcast(win[i], depth + 1);
-                      } catch (e) {
-                        try {
-                          broadcast(win.frames[i], depth + 1);
-                        } catch (ignore) {}
-                      }
-                    }
-                  }
-
-                  broadcast(window, 0);
-                  return sent;
-                };
-
-                return window.__mashwarakBroadcastTour();
-              } catch (e) {
-                return -1;
-              }
-            })();
-        """.trimIndent()
-
-        webView.evaluateJavascript(installAndBroadcastJs) {
-            // Google Sites can nest the Apps Script app more than one iframe deep.
-            // Send a second pass after the frame tree has had time to receive the first one.
-            Handler(Looper.getMainLooper()).postDelayed({
-                webView.evaluateJavascript(
-                    "(function(){try{return window.__mashwarakBroadcastTour?window.__mashwarakBroadcastTour():-1}catch(e){return -1}})();",
-                    null
-                )
-            }, 280)
-
-            // Do not show a false success message. Confirm that the actual
-            // Mashwarak page acknowledged starting the walkthrough.
-            Handler(Looper.getMainLooper()).postDelayed({
-                webView.evaluateJavascript(
-                    "(function(){try{return window.__mashwarakTourAck===true}catch(e){return false}})();"
-                ) { result ->
-                    val started = result?.trim()?.equals("true", ignoreCase = true) == true
-
-                    Toast.makeText(
-                        this,
-                        if (started) {
-                            "تم فتح شرح الاستخدام"
-                        } else {
-                            "تعذر فتح الشرح الآن، جرّب مرة أخرى"
-                        },
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-            }, 950)
-        }
-    }
-
     private fun roundedBackground(
         color: Int,
         radiusDp: Float,
@@ -2286,7 +2239,55 @@ class MainActivity : AppCompatActivity() {
             marginStart = dp(16)
             marginEnd = dp(16)
         })
+
+        // Only the FIRST opening shows M with a circular loader; the original
+        // Skeleton underneath remains entirely unchanged and animating.
+        splashIntro = FrameLayout(this).apply {
+            setBackgroundColor(brandBackground)
+            isClickable = true
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        val introContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+        }
+        introContent.addView(ImageView(this).apply {
+            setImageResource(R.drawable.mashwarak_monogram_launch)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            contentDescription = "مشوارك"
+        }, LinearLayout.LayoutParams(dp(188), dp(188)))
+        introContent.addView(ProgressBar(this, null, android.R.attr.progressBarStyle).apply {
+            isIndeterminate = true
+            indeterminateTintList = android.content.res.ColorStateList.valueOf(brandGold)
+        }, LinearLayout.LayoutParams(dp(36), dp(36)).apply {
+            topMargin = dp(2)
+            gravity = Gravity.CENTER_HORIZONTAL
+        })
+        splashIntro.addView(introContent, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.CENTER
+        ))
+        overlay.addView(splashIntro, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
         return overlay
+    }
+
+    private fun beginSplashIntro() {
+        if (splashIntroScheduled) return
+        splashIntroScheduled = true
+        // Brief brand phase; NEVER replace or delay the underlying Skeleton loading.
+        splash.postDelayed({
+            splashIntroCompleted = true
+            if (::splashIntro.isInitialized) splashIntro.visibility = View.GONE
+            // If the web app was exceptionally quick, show Skeleton for one short beat.
+            if (splashHideRequestedDuringIntro && pageShown && !offlineScreenVisible) {
+                splashHideRequestedDuringIntro = false
+                splash.postDelayed({ if (pageShown && !offlineScreenVisible) hideSplash() }, 240L)
+            }
+        }, 700L)
     }
 
     // V229 — connectivity check uses Android's validated network status,
@@ -2513,6 +2514,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun hideSplash() {
         if (splash.visibility != View.VISIBLE) return
+        if (!splashIntroCompleted) {
+            splashHideRequestedDuringIntro = true
+            return
+        }
         splash.animate()
             .alpha(0f)
             .setDuration(260)
@@ -2597,6 +2602,15 @@ class MainActivity : AppCompatActivity() {
                     }
                     "camera" -> MashwarakCameraBridge().setCaptureMode(data.optString("mode"))
                     "location" -> requestNativeCurrentLocation()
+                    "captainLocation" -> requestNativeCurrentLocation(
+                        captainReply = replyProxy,
+                        captainRequestId = data.optString("requestId").take(40)
+                    )
+                    "captainLocationCapability" -> runCatching {
+                        replyProxy.postMessage(JSONObject()
+                            .put("action", "captainLocationCapabilityV1")
+                            .put("supported", true).toString())
+                    }
                     "picker" -> MashwarakLocationBridge().openNativePicker(data.optString("mode"), data.optString("lat"), data.optString("lng"), data.optString("label").take(300))
                     "saveImage" -> MashwarakDownloadBridge().saveBase64Image(data.optString("name"), data.optString("data"))
                 }
@@ -2831,6 +2845,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         stopSplashShimmer()
+        pendingCaptainLocationReply = null
+        pendingCaptainLocationRequestId = ""
         if (networkObserverRegistered) {
             runCatching { connectivity.unregisterNetworkCallback(connectivityObserver) }
             networkObserverRegistered = false
