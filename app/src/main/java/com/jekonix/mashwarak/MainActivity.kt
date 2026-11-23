@@ -87,7 +87,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var splashIntro: FrameLayout
     private var splashIntroScheduled = false
     private var splashIntroCompleted = false
-    private var splashHideRequestedDuringIntro = false
+    private var splashIntroTransitionPending = false
 
     // V350 read-only startup telemetry. Active ONLY in isolated diagnostic flavor.
     private val v350Start = SystemClock.elapsedRealtime()
@@ -2352,17 +2352,6 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
             marginEnd = dp(16)
         })
 
-        val marker = View(this).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(brandGold)
-            }
-            elevation = dp(2).toFloat()
-        }
-        overlay.addView(marker, FrameLayout.LayoutParams(dp(15), dp(15)).apply {
-            gravity = Gravity.CENTER
-        })
-
         val lower = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(16))
@@ -2421,18 +2410,9 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
     private fun beginSplashIntro() {
         if (splashIntroScheduled) return
         splashIntroScheduled = true
-        // Brief brand phase; NEVER replace or delay the underlying Skeleton loading.
+        // The logo stays in front until the app is actually ready.
+        // WebView, scripts and Cloud requests still load concurrently below it.
         v350Mark("BRAND_INTRO_START")
-        splash.postDelayed({
-            v350Mark("BRAND_INTRO_END")
-            splashIntroCompleted = true
-            if (::splashIntro.isInitialized) splashIntro.visibility = View.GONE
-            // If the web app was exceptionally quick, show Skeleton for one short beat.
-            if (splashHideRequestedDuringIntro && pageShown && !offlineScreenVisible) {
-                splashHideRequestedDuringIntro = false
-                splash.postDelayed({ if (pageShown && !offlineScreenVisible) hideSplash() }, 240L)
-            }
-        }, 700L)
     }
 
     // V229 — connectivity check uses Android's validated network status,
@@ -2661,14 +2641,27 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
 
     private fun hideSplash() {
         v350Mark("SPLASH_HIDE_REQUEST")
-        if (splash.visibility != View.VISIBLE) return
+        if (splash.visibility != View.VISIBLE || splashIntroTransitionPending) return
         if (!splashIntroCompleted) {
-            splashHideRequestedDuringIntro = true
+            // The first transition only starts when the HTML has confirmed ready.
+            // A brief Skeleton glimpse uses the same time budget as the old fade.
+            if (!pageShown || offlineScreenVisible || webLoadFailed) return
+            splashIntroCompleted = true
+            splashIntroTransitionPending = true
+            v350Mark("BRAND_INTRO_END")
+            if (::splashIntro.isInitialized) splashIntro.visibility = View.GONE
+            splash.postDelayed({
+                splashIntroTransitionPending = false
+                if (!isDestroyed && !isFinishing && pageShown &&
+                    !offlineScreenVisible && !webLoadFailed && splash.visibility == View.VISIBLE) {
+                    hideSplash()
+                }
+            }, 160L)
             return
         }
         splash.animate()
             .alpha(0f)
-            .setDuration(260)
+            .setDuration(100L)
             .withEndAction {
                 v350Mark("SPLASH_HIDDEN")
                 splash.visibility = View.GONE
