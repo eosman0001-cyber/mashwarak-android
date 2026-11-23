@@ -116,6 +116,7 @@ class MainActivity : AppCompatActivity() {
         fun first(name: String): Long? = snapshot.firstOrNull { it.second.startsWith(name) }?.first
         val finished = first("MAIN_PAGE_FINISHED")
         val ready = first("WEB_READY_RECEIVED")
+        val earlyVisual = first("V360_VISUAL_GATE_RECEIVED")
         val revealed = first("SPLASH_HIDDEN")
         val deltaFinishReady = if (finished != null && ready != null && ready >= finished)
             "${ready - finished} ms" else "غير محدد (قد تصل ready قبل onPageFinished)"
@@ -124,6 +125,7 @@ Package: ${applicationContext.packageName}
 Activity -> First page finished: ${finished?.toString()?.plus(" ms") ?: "غير مسجل"}
 First page finished -> Web ready: $deltaFinishReady
 Activity -> Web ready: ${ready?.toString()?.plus(" ms") ?: "غير مسجل"}
+Activity -> Visual gate: ${earlyVisual?.toString()?.plus(" ms") ?: "غير مسجل"}
 Activity -> Skeleton hidden: ${revealed?.toString()?.plus(" ms") ?: "غير مسجل"}
 
 TIMELINE
@@ -177,6 +179,46 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
         }.onFailure { v350Mark("DOCUMENT_START_SCRIPT_ERROR ${it.javaClass.simpleName}") }
     }
 
+    // V360 — isolated diagnostic A/B of the PRE-V344.3 early visual reveal.
+    // The HTML's full-screen login/loading gate remains in charge of privacy.
+    // The later verified "ready" signal still runs all normal app/deep-link actions.
+    private fun v360InstallVisualGateProbe() {
+        if (!BuildConfig.IS_DIAGNOSTIC) return
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            v350Mark("V360_VISUAL_PROBE_UNSUPPORTED")
+            return
+        }
+        val js = """(function(){
+  if(window.__mwV360VisualProbe)return;
+  window.__mwV360VisualProbe=true;
+  var sent=false;
+  function signal(){
+    if(sent)return;
+    // Restrict the visual preview to the existing full-screen auth/loading gate.
+    // Never uncover a raw document, a failed load, or arbitrary third-party HTML.
+    var gate=document.getElementById('mw268Gate');
+    if(!gate || gate.hidden || !gate.querySelector('#mw268GateLoading'))return;
+    var style=window.getComputedStyle(gate);
+    if(style.display==='none'||style.visibility==='hidden')return;
+    var bounds=gate.getBoundingClientRect();
+    if(bounds.width<120||bounds.height<120)return;
+    var bridge=window.MashwarakNativeV201;
+    if(!bridge||typeof bridge.postMessage!=='function')return;
+    sent=true;
+    requestAnimationFrame(function(){requestAnimationFrame(function(){
+      try{bridge.postMessage(JSON.stringify({action:'visualReadyV360'}))}catch(_){}
+    })});
+  }
+  if(document.readyState==='loading')
+    document.addEventListener('DOMContentLoaded',signal,{once:true});
+  else signal();
+})();""".trimIndent()
+        runCatching {
+            WebViewCompat.addDocumentStartJavaScript(webView, js, trustedFrameOrigins)
+            v350Mark("V360_VISUAL_PROBE_INSTALLED")
+        }.onFailure { v350Mark("V360_VISUAL_PROBE_ERROR ${it.javaClass.simpleName}") }
+    }
+
     private lateinit var webView: WebView
     private lateinit var progress: ProgressBar
     private lateinit var splash: FrameLayout
@@ -218,6 +260,9 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
     private var pendingDownloadName: String? = null
     private var pendingDownloadDataUrl: String? = null
     private var pageShown = false
+    // V360 A/B ONLY: release the native cover when the EXISTING, non-sensitive
+    // HTML auth gate is painted. Do not treat this as a verified Cloud session.
+    private var v360VisualGateVisible = false
     private var nativeLocationRunning = false
     private var locationGeneration = 0
     // Captain coordinates return over the scoped Android bridge, not iframe geolocation.
@@ -530,6 +575,7 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
 
         installScopedNativeBridge()
         v350InstallDocumentTimings()
+        v360InstallVisualGateProbe()
         v350Mark("WEBVIEW_SETTINGS_AND_BRIDGE_READY")
 
 
@@ -2625,6 +2671,7 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
     private fun showSplash() {
         v350Mark("SPLASH_SHOWN")
         pageShown = false
+        v360VisualGateVisible = false
         lifecycleHandler.removeCallbacksAndMessages(null)
         lifecycleHandler.postDelayed({
             if (!pageShown && !isDestroyed && !isFinishing) {
@@ -2645,14 +2692,14 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
         if (!splashIntroCompleted) {
             // The first transition only starts when the HTML has confirmed ready.
             // A brief Skeleton glimpse uses the same time budget as the old fade.
-            if (!pageShown || offlineScreenVisible || webLoadFailed) return
+            if ((!pageShown && !v360VisualGateVisible) || offlineScreenVisible || webLoadFailed) return
             splashIntroCompleted = true
             splashIntroTransitionPending = true
             v350Mark("BRAND_INTRO_END")
             if (::splashIntro.isInitialized) splashIntro.visibility = View.GONE
             splash.postDelayed({
                 splashIntroTransitionPending = false
-                if (!isDestroyed && !isFinishing && pageShown &&
+                if (!isDestroyed && !isFinishing && (pageShown || v360VisualGateVisible) &&
                     !offlineScreenVisible && !webLoadFailed && splash.visibility == View.VISIBLE) {
                     hideSplash()
                 }
@@ -2734,6 +2781,17 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
                 val data = JSONObject(raw)
                 when (data.optString("action")) {
                     "ready" -> { v350Mark("WEB_READY_RECEIVED"); revealApp() }
+                    "visualReadyV360" -> {
+                        // Only for the separately installed diagnostic APK. A painted
+                        // login/loading gate is not proof of a verified account.
+                        // Do not set pageShown or dispatch notification/deep links here.
+                        if (BuildConfig.IS_DIAGNOSTIC && !v360VisualGateVisible && !pageShown &&
+                            !offlineScreenVisible && !webLoadFailed && isInternetAvailable()) {
+                            v360VisualGateVisible = true
+                            v350Mark("V360_VISUAL_GATE_RECEIVED")
+                            hideSplash()
+                        }
+                    }
                     "getFcmToken" -> {
                         if (!BuildConfig.IS_DIAGNOSTIC && FirebaseApp.getApps(this).isNotEmpty()) {
                             FirebaseMessaging.getInstance().token.addOnSuccessListener { fcm ->
