@@ -73,9 +73,18 @@ android {
         // V350 ONLY: installs alongside Play, cannot replace the production app.
         create("diagnostic") {
             dimension = "distribution"
-            applicationIdSuffix = ".v350"
+            // V351: independent A/B tester. Never replace the production app or V350.
+            applicationIdSuffix = ".v351"
             buildConfigField("boolean", "DIRECT_UPDATES", "false")
             buildConfigField("boolean", "IS_DIAGNOSTIC", "true")
+            // Only this diagnostic flavor bypasses the Google Sites outer page.
+            // The direct Apps Script URL is already declared in project configuration.
+            // Keep the same exact-origin restrictions in MainActivity.kt.
+            val directExecUrl = cfg("WEB_APP_EXEC_URL")
+            require(directExecUrl.startsWith("https://script.google.com/macros/s/") && directExecUrl.endsWith("/exec")) {
+                "V351: WEB_APP_EXEC_URL is missing or invalid; refusing to build the direct experiment"
+            }
+            buildConfigField("String", "APP_URL", "\"$directExecUrl\"")
         }
     }
 
