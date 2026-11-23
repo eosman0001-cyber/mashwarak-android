@@ -89,6 +89,94 @@ class MainActivity : AppCompatActivity() {
     private var splashIntroCompleted = false
     private var splashHideRequestedDuringIntro = false
 
+    // V350 read-only startup telemetry. Active ONLY in isolated diagnostic flavor.
+    private val v350Start = SystemClock.elapsedRealtime()
+    private val v350Events = mutableListOf<Pair<Long, String>>()
+    private lateinit var v350Badge: TextView
+    private var v350Progress25 = false
+    private var v350Progress50 = false
+    private var v350Progress75 = false
+    private var v350Progress100 = false
+
+    private fun v350Mark(label: String) {
+        if (!BuildConfig.IS_DIAGNOSTIC) return
+        val elapsed = SystemClock.elapsedRealtime() - v350Start
+        synchronized(v350Events) {
+            if (v350Events.size < 120) v350Events.add(elapsed to label)
+        }
+        android.util.Log.i("MashwarakV350", "${elapsed}ms | $label")
+        if (::v350Badge.isInitialized) runOnUiThread {
+            if (::v350Badge.isInitialized) v350Badge.text = "V350 | ${elapsed}ms | عرض القياسات"
+        }
+    }
+
+    private fun v350Report(): String {
+        val snapshot = synchronized(v350Events) { v350Events.toList() }
+        val lines = snapshot.joinToString("\n") { "${it.first} ms | ${it.second}" }
+        fun first(name: String): Long? = snapshot.firstOrNull { it.second.startsWith(name) }?.first
+        val finished = first("MAIN_PAGE_FINISHED")
+        val ready = first("WEB_READY_RECEIVED")
+        val revealed = first("SPLASH_HIDDEN")
+        val deltaFinishReady = if (finished != null && ready != null && ready >= finished)
+            "${ready - finished} ms" else "غير محدد (قد تصل ready قبل onPageFinished)"
+        return """Mashwarak V350 | Diagnostic only
+Package: ${applicationContext.packageName}
+Activity -> First page finished: ${finished?.toString()?.plus(" ms") ?: "غير مسجل"}
+First page finished -> Web ready: $deltaFinishReady
+Activity -> Web ready: ${ready?.toString()?.plus(" ms") ?: "غير مسجل"}
+Activity -> Skeleton hidden: ${revealed?.toString()?.plus(" ms") ?: "غير مسجل"}
+
+TIMELINE
+$lines
+
+No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
+    }
+
+    private fun v350ShowReport() {
+        if (!BuildConfig.IS_DIAGNOSTIC || isFinishing || isDestroyed) return
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("V350 | تفاصيل زمن الفتح")
+            .setMessage(v350Report())
+            .setPositiveButton("نسخ القياسات") { _, _ ->
+                val clip = android.content.ClipData.newPlainText("Mashwarak V350", v350Report())
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(this, "تم نسخ القياسات", Toast.LENGTH_SHORT).show()
+            }
+            .setNeutralButton("مشاركة") { _, _ ->
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, v350Report())
+                }, "مشاركة تقرير V350"))
+            }
+            .setNegativeButton("إغلاق", null)
+            .show()
+    }
+
+    private fun v350InstallDocumentTimings() {
+        if (!BuildConfig.IS_DIAGNOSTIC) return
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            v350Mark("DOCUMENT_START_SCRIPT_UNSUPPORTED")
+            return
+        }
+        // Exact origins only; no wildcard, no credential or payload interception.
+        val origins = trustedFrameOrigins + setOf(
+            "https://www.mshwarak.org", "https://sites.google.com", "https://script.google.com"
+        )
+        val script = """(function(){
+            if(window.__mashwarakV350DocTrace)return;
+            window.__mashwarakV350DocTrace=true;
+            function mark(name){try{console.info('MWV350|'+name+'|'+location.hostname)}catch(e){}}
+            mark('DOCUMENT_START');
+            document.addEventListener('DOMContentLoaded',function(){mark('DOM_CONTENT_LOADED')},{once:true});
+            window.addEventListener('load',function(){mark('WINDOW_LOAD')},{once:true});
+        })();""".trimIndent()
+        runCatching {
+            WebViewCompat.addDocumentStartJavaScript(webView, script, origins)
+            v350Mark("DOCUMENT_START_SCRIPT_INSTALLED")
+        }.onFailure { v350Mark("DOCUMENT_START_SCRIPT_ERROR ${it.javaClass.simpleName}") }
+    }
+
     private lateinit var webView: WebView
     private lateinit var progress: ProgressBar
     private lateinit var splash: FrameLayout
@@ -259,6 +347,7 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        v350Mark("ACTIVITY_ON_CREATE")
 
         // First ordinary app opening only. Never interrupt shared locations,
         // notification intents, or an Activity recreated by Android.
@@ -297,6 +386,7 @@ class MainActivity : AppCompatActivity() {
         webView = WebView(this).apply {
             setBackgroundColor(brandBackground)
         }
+        v350Mark("WEBVIEW_CREATED")
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             visibility = View.VISIBLE
@@ -378,6 +468,27 @@ class MainActivity : AppCompatActivity() {
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
         ))
         setContentView(root)
+        v350Mark("NATIVE_CONTENT_SET")
+        if (BuildConfig.IS_DIAGNOSTIC) {
+            v350Badge = TextView(this).apply {
+                text = "V350 | عرض القياسات"
+                textSize = 11f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                setPadding(dp(12), 0, dp(12), 0)
+                background = GradientDrawable().apply {
+                    setColor(Color.rgb(35, 35, 35))
+                    cornerRadius = dp(10).toFloat()
+                    setStroke(dp(1), brandGold)
+                }
+                elevation = dp(10).toFloat()
+                setOnClickListener { v350ShowReport() }
+            }
+            root.addView(v350Badge, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, dp(38), Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            ).apply { topMargin = dp(46) })
+            v350Badge.bringToFront()
+        }
         startSplashShimmer()
         beginSplashIntro()
 
@@ -418,9 +529,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         installScopedNativeBridge()
+        v350InstallDocumentTimings()
+        v350Mark("WEBVIEW_SETTINGS_AND_BRIDGE_READY")
 
 
         webView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                v350Mark("MAIN_PAGE_STARTED host=${Uri.parse(url.orEmpty()).host.orEmpty()}")
+                super.onPageStarted(view, url, favicon)
+            }
+
+            override fun onPageCommitVisible(view: WebView?, url: String?) {
+                v350Mark("MAIN_PAGE_COMMIT_VISIBLE host=${Uri.parse(url.orEmpty()).host.orEmpty()}")
+                super.onPageCommitVisible(view, url)
+            }
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: WebResourceRequest?
@@ -496,6 +618,7 @@ class MainActivity : AppCompatActivity() {
                 // WebView calls this for pictures, scripts and nested frames too.
                 // A single Google Maps tile failing must NOT replace the booking screen.
                 if (request?.isForMainFrame == true) {
+                    v350Mark("MAIN_PAGE_NETWORK_ERROR code=${error?.errorCode}")
                     webLoadFailed = true
                     showNativeOfflineScreen(!isInternetAvailable())
                 } else if (!isInternetAvailable()) {
@@ -533,6 +656,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
+                v350Mark("MAIN_PAGE_FINISHED host=${Uri.parse(url.orEmpty()).host.orEmpty()}")
                 progress.visibility = View.GONE
                 if (webLoadFailed || !isInternetAvailable()) {
                     if (!isInternetAvailable()) showNativeOfflineScreen(true)
@@ -562,6 +686,18 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: ConsoleMessage?): Boolean {
+                val raw = message?.message().orEmpty()
+                if (BuildConfig.IS_DIAGNOSTIC && raw.startsWith("MWV350|")) {
+                    // Instrumented JS deliberately records only host and lifecycle stage.
+                    val parts = raw.split('|')
+                    if (parts.size == 3 && parts[1] in setOf("DOCUMENT_START", "DOM_CONTENT_LOADED", "WINDOW_LOAD")) {
+                        v350Mark("JS_${parts[1]} host=${parts[2].take(80)}")
+                    }
+                    return true
+                }
+                return super.onConsoleMessage(message)
+            }
             override fun onGeolocationPermissionsShowPrompt(
                 origin: String?,
                 callback: GeolocationPermissions.Callback?
@@ -591,6 +727,12 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                if (BuildConfig.IS_DIAGNOSTIC) {
+                    if (newProgress >= 25 && !v350Progress25) { v350Progress25 = true; v350Mark("WEB_PROGRESS_25") }
+                    if (newProgress >= 50 && !v350Progress50) { v350Progress50 = true; v350Mark("WEB_PROGRESS_50") }
+                    if (newProgress >= 75 && !v350Progress75) { v350Progress75 = true; v350Mark("WEB_PROGRESS_75") }
+                    if (newProgress >= 100 && !v350Progress100) { v350Progress100 = true; v350Mark("WEB_PROGRESS_100") }
+                }
                 progress.visibility =
                     if (newProgress >= 100) View.GONE else View.VISIBLE
                 progress.progress = newProgress
@@ -647,8 +789,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        setupNotifications()
-        checkForUpdatesSilentlyOncePerDay()
+        // Side-by-side V350 must not register a second captain notification token.
+        if (!BuildConfig.IS_DIAGNOSTIC) setupNotifications()
+        if (!BuildConfig.IS_DIAGNOSTIC) checkForUpdatesSilentlyOncePerDay()
 
         onBackPressedDispatcher.addCallback(
             this,
@@ -2279,7 +2422,9 @@ class MainActivity : AppCompatActivity() {
         if (splashIntroScheduled) return
         splashIntroScheduled = true
         // Brief brand phase; NEVER replace or delay the underlying Skeleton loading.
+        v350Mark("BRAND_INTRO_START")
         splash.postDelayed({
+            v350Mark("BRAND_INTRO_END")
             splashIntroCompleted = true
             if (::splashIntro.isInitialized) splashIntro.visibility = View.GONE
             // If the web app was exceptionally quick, show Skeleton for one short beat.
@@ -2342,6 +2487,7 @@ class MainActivity : AppCompatActivity() {
                 offlineDescription.text = "لحظات، وبنرجعك لمشوارك..."
                 offlineRetry.text = "إعادة المحاولة"
             }
+            v350Mark("LOAD_URL_CALLED")
             webView.loadUrl(BuildConfig.APP_URL)
         }
     }
@@ -2497,6 +2643,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showSplash() {
+        v350Mark("SPLASH_SHOWN")
         pageShown = false
         lifecycleHandler.removeCallbacksAndMessages(null)
         lifecycleHandler.postDelayed({
@@ -2513,6 +2660,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun hideSplash() {
+        v350Mark("SPLASH_HIDE_REQUEST")
         if (splash.visibility != View.VISIBLE) return
         if (!splashIntroCompleted) {
             splashHideRequestedDuringIntro = true
@@ -2522,6 +2670,7 @@ class MainActivity : AppCompatActivity() {
             .alpha(0f)
             .setDuration(260)
             .withEndAction {
+                v350Mark("SPLASH_HIDDEN")
                 splash.visibility = View.GONE
                 splash.alpha = 1f
                 stopSplashShimmer()
@@ -2544,7 +2693,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun revealApp() {
-        if (isDestroyed || isFinishing || !isInternetAvailable() || webLoadFailed) return
+        if (isDestroyed || isFinishing || !isInternetAvailable() || webLoadFailed) {
+            v350Mark("REVEAL_BLOCKED")
+            return
+        }
+        v350Mark("REVEAL_ACCEPTED")
         hideNativeOfflineScreen()
         pageShown = true
         lifecycleHandler.removeCallbacksAndMessages(null)
@@ -2587,9 +2740,9 @@ class MainActivity : AppCompatActivity() {
             runCatching {
                 val data = JSONObject(raw)
                 when (data.optString("action")) {
-                    "ready" -> revealApp()
+                    "ready" -> { v350Mark("WEB_READY_RECEIVED"); revealApp() }
                     "getFcmToken" -> {
-                        if (FirebaseApp.getApps(this).isNotEmpty()) {
+                        if (!BuildConfig.IS_DIAGNOSTIC && FirebaseApp.getApps(this).isNotEmpty()) {
                             FirebaseMessaging.getInstance().token.addOnSuccessListener { fcm ->
                                 if (!isDestroyed && fcm.isNotBlank()) {
                                     val result = JSONObject().put("action", "fcmTokenV246").put("token", fcm).toString()

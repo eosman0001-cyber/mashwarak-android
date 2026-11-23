@@ -54,6 +54,7 @@ android {
         }
         val finalMapsApiKey = mapsApiKey.ifBlank { "MISSING_MAPS_API_KEY" }
         manifestPlaceholders["MAPS_API_KEY"] = finalMapsApiKey
+        buildConfigField("boolean", "IS_DIAGNOSTIC", "false")
         // Reuse the same Android-restricted key for Places API (New).
         // The key is injected by GitHub Actions and is never committed to source.
         buildConfigField("String", "MAPS_API_KEY", "\"${finalMapsApiKey}\"")
@@ -68,6 +69,13 @@ android {
         create("play") {
             dimension = "distribution"
             buildConfigField("boolean", "DIRECT_UPDATES", "false")
+        }
+        // V350 ONLY: installs alongside Play, cannot replace the production app.
+        create("diagnostic") {
+            dimension = "distribution"
+            applicationIdSuffix = ".v350"
+            buildConfigField("boolean", "DIRECT_UPDATES", "false")
+            buildConfigField("boolean", "IS_DIAGNOSTIC", "true")
         }
     }
 
