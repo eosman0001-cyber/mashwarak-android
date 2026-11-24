@@ -172,16 +172,33 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
             mark('DOCUMENT_START');
             document.addEventListener('DOMContentLoaded',function(){mark('DOM_CONTENT_LOADED')},{once:true});
             window.addEventListener('load',function(){mark('WINDOW_LOAD')},{once:true});
-            var bridge=window.MashwarakNativeV201;
-            if(!bridge||typeof bridge.postMessage!=='function'||typeof window.fetch!=='function')return;
             var original=window.fetch, seq=0;
             var base='https://mashwarak-beta-api-962311893063.europe-west1.run.app';
             var routes={'/v1/auth/refresh':'AUTH_REFRESH','/v1/auth/session':'AUTH_SESSION','/v1/profile/me':'PROFILE_ME'};
-            function emit(route,phase,id,ms){
-                try{bridge.postMessage(JSON.stringify({action:'diagCloudV350',route:route,phase:phase,id:id,ms:Math.round(ms)}));}catch(_){}
+            function routeOf(input){
+                var url=typeof input==='string'?input:(input&&typeof input.url==='string'?input.url:'');
+                return url.indexOf(base+'/')===0?routes[url.slice(base.length)]:null;
             }
+            function emit(route,phase,id,ms){
+                try{var bridge=window.MashwarakNativeV201;if(bridge&&typeof bridge.postMessage==='function'){
+                    bridge.postMessage(JSON.stringify({action:'diagCloudV350',route:route,phase:phase,id:id,ms:Math.round(ms)}));
+                }else{console.info('MWV350C|'+route+'|'+phase+'|'+id+'|'+Math.round(ms));}}catch(_){}
+            }
+            function inspect(){
+                if(document.getElementById('mw268Gate'))mark('APP_GATE_PRESENT');
+                if(document.getElementById('mw348StartupPrewarm'))mark('PREWARM_SCRIPT_PRESENT');
+            }
+            document.addEventListener('DOMContentLoaded',inspect,{once:true});
+            window.addEventListener('load',inspect,{once:true});
+            try{if(typeof PerformanceObserver==='function'){
+                new PerformanceObserver(function(list){list.getEntries().forEach(function(e){
+                    var route=routeOf(e.name);if(typeof route==='string')emit(route,'RESOURCE',++seq,e.duration);
+                });}).observe({type:'resource',buffered:true});
+                mark('CLOUD_RESOURCE_OBSERVER_INSTALLED');
+            }}catch(_){}
+            if(typeof original!=='function')return;
             window.fetch=function(input){
-                var route=typeof input==='string'&&input.indexOf(base+'/')===0?routes[input.slice(base.length)]:null;
+                var route=routeOf(input);
                 if(typeof route!=='string')return original.apply(this,arguments);
                 var id=++seq,t=performance.now();
                 emit(route,'START',id,0);
@@ -191,6 +208,7 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
                 result.then(function(r){emit(route,r.ok?'HEADERS':'HTTP_ERROR',id,performance.now()-t);},function(){emit(route,'ERROR',id,performance.now()-t);});
                 return result;
             };
+            mark('CLOUD_FETCH_HOOK_INSTALLED');
         })();""".trimIndent()
         runCatching {
             WebViewCompat.addDocumentStartJavaScript(webView, script, origins)
@@ -608,6 +626,22 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
                 v350Mark("MAIN_PAGE_COMMIT_VISIBLE host=${Uri.parse(url.orEmpty()).host.orEmpty()}")
                 super.onPageCommitVisible(view, url)
             }
+            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                if (BuildConfig.IS_DIAGNOSTIC && request != null) {
+                    val uri = request.url
+                    if (uri.scheme == "https" && uri.host == "mashwarak-beta-api-962311893063.europe-west1.run.app" && (uri.port == -1 || uri.port == 443)) {
+                        val route = when (uri.path) {
+                            "/v1/auth/refresh" -> "AUTH_REFRESH"
+                            "/v1/auth/session" -> "AUTH_SESSION"
+                            "/v1/profile/me" -> "PROFILE_ME"
+                            else -> null
+                        }
+                        if (route != null && request.method in setOf("POST", "OPTIONS")) v350Mark("NET_CLOUD_" + route + "_" + request.method)
+                    }
+                }
+                return super.shouldInterceptRequest(view, request)
+            }
+
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: WebResourceRequest?
@@ -753,10 +787,19 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(message: ConsoleMessage?): Boolean {
                 val raw = message?.message().orEmpty()
+                if (BuildConfig.IS_DIAGNOSTIC && raw.startsWith("MWV350C|")) {
+                    val parts = raw.split('|')
+                    if (parts.size == 5 && parts[1] in setOf("AUTH_REFRESH", "AUTH_SESSION", "PROFILE_ME") &&
+                        parts[2] in setOf("START", "HEADERS", "HTTP_ERROR", "ERROR", "RESOURCE") &&
+                        (parts[3].toIntOrNull() ?: -1) in 1..9999 && (parts[4].toIntOrNull() ?: -1) in 0..120000) {
+                        v350Mark("CLOUD_" + parts[1] + "_" + parts[2] + " #" + parts[3].toInt() + " js=" + parts[4].toInt() + "ms")
+                    }
+                    return true
+                }
                 if (BuildConfig.IS_DIAGNOSTIC && raw.startsWith("MWV350|")) {
                     // Instrumented JS deliberately records only host and lifecycle stage.
                     val parts = raw.split('|')
-                    if (parts.size == 3 && parts[1] in setOf("DOCUMENT_START", "DOM_CONTENT_LOADED", "WINDOW_LOAD")) {
+                    if (parts.size == 3 && parts[1] in setOf("DOCUMENT_START", "DOM_CONTENT_LOADED", "WINDOW_LOAD", "APP_GATE_PRESENT", "PREWARM_SCRIPT_PRESENT", "CLOUD_RESOURCE_OBSERVER_INSTALLED", "CLOUD_FETCH_HOOK_INSTALLED")) {
                         v350Mark("JS_${parts[1]} host=${parts[2].take(80)}")
                     }
                     return true
@@ -2807,7 +2850,7 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
                             val id = data.optInt("id", -1)
                             val ms = data.optInt("ms", -1)
                             if (route in setOf("AUTH_REFRESH", "AUTH_SESSION", "PROFILE_ME") &&
-                                phase in setOf("START", "HEADERS", "HTTP_ERROR", "ERROR") &&
+                                phase in setOf("START", "HEADERS", "HTTP_ERROR", "ERROR", "RESOURCE") &&
                                 id in 1..9999 && ms in 0..120000) {
                                 v350Mark("CLOUD_${route}_${phase} #$id js=${ms}ms")
                             }
