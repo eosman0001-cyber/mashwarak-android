@@ -128,7 +128,7 @@ class MainActivity : AppCompatActivity() {
             "${ready - finished} ms" else "غير محدد (قد تصل ready قبل onPageFinished)"
         return """Mashwarak V350 | Diagnostic only
 Package: ${applicationContext.packageName}
-Mode: ${if (d218Preview) "D2.18 direct auth preview" else "original diagnostic"}
+Mode: ${if (d218Preview) "D2.20 direct GPS preview" else "original diagnostic"}
 Activity -> First page finished: ${finished?.toString()?.plus(" ms") ?: "غير مسجل"}
 First page finished -> Web ready: $deltaFinishReady
 Activity -> Web ready: ${ready?.toString()?.plus(" ms") ?: "غير مسجل"}
@@ -1366,8 +1366,20 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
         }
     }
 
+    private fun d220DeliverLocationToPreview(message: JSONObject) {
+        if (isDestroyed || isFinishing || !::webView.isInitialized) return
+        val payload = message.toString()
+        val js = """(function(){if(window===window.top&&location.origin==='https://mashwarak-d214-preview.pages.dev'){window.postMessage($payload,'https://mashwarak-d214-preview.pages.dev');}})();"""
+        webView.evaluateJavascript(js, null)
+    }
+
     private fun broadcastNativeLocationError(message: String) {
         if (!::webView.isInitialized) return
+        if (d218Preview) {
+            v350Mark("D220_GPS_ERROR")
+            d220DeliverLocationToPreview(JSONObject().put("type", "mashwarak-current-location-error").put("message", message))
+            return
+        }
         val msg = JSONObject.quote(message)
         val js = """
             (function(){
@@ -1398,6 +1410,14 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
         subLocality: String = ""
     ) {
         if (!::webView.isInitialized) return
+        if (d218Preview) {
+            v350Mark("D220_GPS_RESULT")
+            d220DeliverLocationToPreview(JSONObject().put("type", type).put("lat", lat).put("lng", lng)
+                .put("label", label).put("governorate", governorate).put("adminArea", governorate)
+                .put("center", center).put("subAdminArea", center).put("locality", locality)
+                .put("subLocality", subLocality).put("area", subLocality))
+            return
+        }
         val typeJson = JSONObject.quote(type)
         val labelJson = JSONObject.quote(label)
         val governorateJson = JSONObject.quote(governorate)
@@ -2862,14 +2882,15 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
             Toast.makeText(this, "حدّث Android System WebView للاستفادة من الخريطة والكاميرا داخل التطبيق.", Toast.LENGTH_LONG).show()
             return
         }
-        WebViewCompat.addWebMessageListener(webView, "MashwarakNativeV201", trustedFrameOrigins) { _, message, origin, _, replyProxy ->
+        WebViewCompat.addWebMessageListener(webView, "MashwarakNativeV201", trustedFrameOrigins) { _, message, origin, isMainFrame, replyProxy ->
             if (isDestroyed || !trustedFrameOrigins.contains(origin.toString().trimEnd('/'))) return@addWebMessageListener
             if (message.type != androidx.webkit.WebMessageCompat.TYPE_STRING) return@addWebMessageListener
             val raw = message.data ?: return@addWebMessageListener
             if (raw.length > 12 * 1024 * 1024 + 1024) return@addWebMessageListener
             runCatching {
                 val data = JSONObject(raw)
-                if (d218Preview && data.optString("action") !in setOf("ready", "diagCloudV350", "visualReadyV360")) return@runCatching
+                if (d218Preview && (!isMainFrame || origin.toString().trimEnd('/') != "https://mashwarak-d214-preview.pages.dev" ||
+                    data.optString("action") !in setOf("ready", "diagCloudV350", "visualReadyV360", "location"))) return@runCatching
                 when (data.optString("action")) {
                     "ready" -> { v350Mark("WEB_READY_RECEIVED"); revealApp() }
                     "diagCloudV350" -> {
@@ -2909,7 +2930,10 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
                         }
                     }
                     "camera" -> MashwarakCameraBridge().setCaptureMode(data.optString("mode"))
-                    "location" -> requestNativeCurrentLocation()
+                    "location" -> {
+                        if (d218Preview) v350Mark("D220_GPS_REQUEST")
+                        requestNativeCurrentLocation()
+                    }
                     "captainLocation" -> requestNativeCurrentLocation(
                         captainReply = replyProxy,
                         captainRequestId = data.optString("requestId").take(40)
