@@ -172,6 +172,25 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
             mark('DOCUMENT_START');
             document.addEventListener('DOMContentLoaded',function(){mark('DOM_CONTENT_LOADED')},{once:true});
             window.addEventListener('load',function(){mark('WINDOW_LOAD')},{once:true});
+            var bridge=window.MashwarakNativeV201;
+            if(!bridge||typeof bridge.postMessage!=='function'||typeof window.fetch!=='function')return;
+            var original=window.fetch, seq=0;
+            var base='https://mashwarak-beta-api-962311893063.europe-west1.run.app';
+            var routes={'/v1/auth/refresh':'AUTH_REFRESH','/v1/auth/session':'AUTH_SESSION','/v1/profile/me':'PROFILE_ME'};
+            function emit(route,phase,id,ms){
+                try{bridge.postMessage(JSON.stringify({action:'diagCloudV350',route:route,phase:phase,id:id,ms:Math.round(ms)}));}catch(_){}
+            }
+            window.fetch=function(input){
+                var route=typeof input==='string'&&input.indexOf(base+'/')===0?routes[input.slice(base.length)]:null;
+                if(typeof route!=='string')return original.apply(this,arguments);
+                var id=++seq,t=performance.now();
+                emit(route,'START',id,0);
+                var result;
+                try{result=original.apply(this,arguments);}
+                catch(e){emit(route,'ERROR',id,performance.now()-t);throw e;}
+                result.then(function(r){emit(route,r.ok?'HEADERS':'HTTP_ERROR',id,performance.now()-t);},function(){emit(route,'ERROR',id,performance.now()-t);});
+                return result;
+            };
         })();""".trimIndent()
         runCatching {
             WebViewCompat.addDocumentStartJavaScript(webView, script, origins)
@@ -2781,6 +2800,19 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
                 val data = JSONObject(raw)
                 when (data.optString("action")) {
                     "ready" -> { v350Mark("WEB_READY_RECEIVED"); revealApp() }
+                    "diagCloudV350" -> {
+                        if (BuildConfig.IS_DIAGNOSTIC) {
+                            val route = data.optString("route")
+                            val phase = data.optString("phase")
+                            val id = data.optInt("id", -1)
+                            val ms = data.optInt("ms", -1)
+                            if (route in setOf("AUTH_REFRESH", "AUTH_SESSION", "PROFILE_ME") &&
+                                phase in setOf("START", "HEADERS", "HTTP_ERROR", "ERROR") &&
+                                id in 1..9999 && ms in 0..120000) {
+                                v350Mark("CLOUD_${route}_${phase} #$id js=${ms}ms")
+                            }
+                        }
+                    }
                     "visualReadyV360" -> {
                         // Only for the separately installed diagnostic APK. A painted
                         // login/loading gate is not proof of a verified account.
