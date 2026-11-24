@@ -162,6 +162,44 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
             .show()
     }
 
+    // D2.27: native-only, manual single-device FCM probe. No WebView or topic registration.
+    private fun d227CopyDiagnosticFcmToken() {
+        if (!d218Preview || !BuildConfig.IS_DIAGNOSTIC || isFinishing || isDestroyed ||
+            packageName != "com.jekonix.mashwarak.v351") return
+        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(
+                this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            Toast.makeText(this, "اسمح بالإشعارات ثم اضغط مطولاً مرة أخرى", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (FirebaseApp.getApps(this).isEmpty()) {
+            Toast.makeText(this, "D227_FIREBASE_UNAVAILABLE", Toast.LENGTH_LONG).show()
+            return
+        }
+        FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+            if (!isFinishing && !isDestroyed && token.isNotBlank()) {
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("D2.27 | اختبار إشعار الجهاز فقط")
+                    .setMessage("انسخ رمز الجهاز التجريبي إلى Cloud Shell الخاص بك فقط. لا ترسله في المحادثة. لا يتم تسجيل الجهاز في قاعدة البيانات.")
+                    .setPositiveButton("نسخ رمز الجهاز") { _, _ ->
+                        val clip = android.content.ClipData.newPlainText("D227 private test token", token)
+                        clip.description.extras = android.os.PersistableBundle().apply {
+                            putBoolean("android.content.extra.IS_SENSITIVE", true)
+                        }
+                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(this, "تم النسخ | لا تشارك الرمز", Toast.LENGTH_SHORT).show()
+                    }
+                    .setNegativeButton("إلغاء", null)
+                    .show()
+            }
+        }.addOnFailureListener {
+            if (!isFinishing && !isDestroyed) {
+                Toast.makeText(this, "D227_TOKEN_UNAVAILABLE", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     private fun v350InstallDocumentTimings() {
         if (!BuildConfig.IS_DIAGNOSTIC) return
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
@@ -574,6 +612,10 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
                 }
                 elevation = dp(10).toFloat()
                 setOnClickListener { v350ShowReport() }
+                if (d218Preview) setOnLongClickListener {
+                    d227CopyDiagnosticFcmToken()
+                    true
+                }
             }
             root.addView(v350Badge, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, dp(38), Gravity.TOP or Gravity.CENTER_HORIZONTAL
