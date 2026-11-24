@@ -79,6 +79,10 @@ android {
             buildConfigField("boolean", "IS_DIAGNOSTIC", "true")
             // V356: diagnostic uses the real website from defaultConfig.APP_URL.
             // Do not override it with the Apps Script /exec endpoint.
+            // D2.18: owner-protected direct-delivery measurement only.
+            buildConfigField("String", "APP_URL", "\"https://mashwarak-d214-preview.pages.dev/\"")
+            buildConfigField("String", "WEB_APP_ORIGINS", "\"https://mashwarak-d214-preview.pages.dev\"")
+            buildConfigField("String", "WEB_APP_EXEC_URL", "\"\"")
 
         }
     }

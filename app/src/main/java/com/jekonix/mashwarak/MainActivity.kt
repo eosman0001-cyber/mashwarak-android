@@ -97,6 +97,12 @@ class MainActivity : AppCompatActivity() {
     private var v350Progress50 = false
     private var v350Progress75 = false
     private var v350Progress100 = false
+    private val d218Preview = BuildConfig.IS_DIAGNOSTIC && BuildConfig.APP_URL == "https://mashwarak-d214-preview.pages.dev/"
+    private var d218AccessScreenShown = false
+    private fun d218AccessUri(uri: Uri): Boolean = d218Preview && uri.scheme == "https" &&
+        uri.userInfo == null && (uri.port == -1 || uri.port == 443) &&
+        uri.host == "mashwarak-d214-preview-pages.cloudflareaccess.com" &&
+        uri.path.orEmpty().startsWith("/cdn-cgi/access/")
 
     private fun v350Mark(label: String) {
         if (!BuildConfig.IS_DIAGNOSTIC) return
@@ -122,6 +128,7 @@ class MainActivity : AppCompatActivity() {
             "${ready - finished} ms" else "غير محدد (قد تصل ready قبل onPageFinished)"
         return """Mashwarak V350 | Diagnostic only
 Package: ${applicationContext.packageName}
+Mode: ${if (d218Preview) "D2.18 direct auth preview" else "original diagnostic"}
 Activity -> First page finished: ${finished?.toString()?.plus(" ms") ?: "غير مسجل"}
 First page finished -> Web ready: $deltaFinishReady
 Activity -> Web ready: ${ready?.toString()?.plus(" ms") ?: "غير مسجل"}
@@ -177,7 +184,9 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
             var routes={'/v1/auth/refresh':'AUTH_REFRESH','/v1/auth/session':'AUTH_SESSION','/v1/profile/me':'PROFILE_ME'};
             function routeOf(input){
                 var url=typeof input==='string'?input:(input&&typeof input.url==='string'?input.url:'');
-                return url.indexOf(base+'/')===0?routes[url.slice(base.length)]:null;
+                try{var u=new URL(url,location.href);
+                    if(u.origin===base||(location.origin==='https://mashwarak-d214-preview.pages.dev'&&u.origin===location.origin))return routes[u.pathname]||null;
+                }catch(_){}return null;
             }
             function emit(route,phase,id,ms){
                 try{var bridge=window.MashwarakNativeV201;if(bridge&&typeof bridge.postMessage==='function'){
@@ -619,6 +628,11 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 v350Mark("MAIN_PAGE_STARTED host=${Uri.parse(url.orEmpty()).host.orEmpty()}")
+                if (d218Preview && d218AccessScreenShown && Uri.parse(url.orEmpty()).host == "mashwarak-d214-preview.pages.dev") {
+                    d218AccessScreenShown = false
+                    v350Mark("D218_ACCESS_RETURN_SETUP_ONLY")
+                    showSplash()
+                }
                 super.onPageStarted(view, url, favicon)
             }
 
@@ -629,7 +643,8 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                 if (BuildConfig.IS_DIAGNOSTIC && request != null) {
                     val uri = request.url
-                    if (uri.scheme == "https" && uri.host == "mashwarak-beta-api-962311893063.europe-west1.run.app" && (uri.port == -1 || uri.port == 443)) {
+                    if (uri.scheme == "https" && (uri.host == "mashwarak-beta-api-962311893063.europe-west1.run.app" ||
+                        (d218Preview && uri.host == "mashwarak-d214-preview.pages.dev")) && (uri.port == -1 || uri.port == 443)) {
                         val route = when (uri.path) {
                             "/v1/auth/refresh" -> "AUTH_REFRESH"
                             "/v1/auth/session" -> "AUTH_SESSION"
@@ -648,6 +663,8 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
             ): Boolean {
                 val uri = request?.url ?: return false
                 val scheme = uri.scheme.orEmpty()
+                // Access OTP setup is main-frame navigation only, not a privileged bridge origin.
+                if (request.isForMainFrame && d218AccessUri(uri)) return false
 
                 // External contact links must never replace the Apps Script page.
                 // Navigating to WhatsApp inside WebView can show "Page Not Found";
@@ -757,6 +774,15 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
             override fun onPageFinished(view: WebView?, url: String?) {
                 v350Mark("MAIN_PAGE_FINISHED host=${Uri.parse(url.orEmpty()).host.orEmpty()}")
                 progress.visibility = View.GONE
+                if (!webLoadFailed && d218AccessUri(Uri.parse(url.orEmpty()))) {
+                    d218AccessScreenShown = true
+                    lifecycleHandler.removeCallbacksAndMessages(null)
+                    splash.animate().cancel()
+                    splash.visibility = View.GONE
+                    stopSplashShimmer()
+                    v350Mark("D218_ACCESS_LOGIN_VISIBLE_SETUP_ONLY")
+                    return
+                }
                 if (webLoadFailed || !isInternetAvailable()) {
                     if (!isInternetAvailable()) showNativeOfflineScreen(true)
                     return
@@ -811,6 +837,7 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
                 callback: GeolocationPermissions.Callback?
             ) {
                 if (callback == null) return
+                if (d218Preview) { callback.invoke(origin, false, false); return }
                 if (origin == null || !trustedFrameOrigins.contains(origin.trimEnd('/'))) { callback.invoke(origin, false, false); return }
                 val fine = ContextCompat.checkSelfPermission(
                     this@MainActivity,
@@ -851,6 +878,7 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
                 filePathCallback: ValueCallback<Array<Uri>>?,
                 fileChooserParams: FileChooserParams?
             ): Boolean {
+                if (d218Preview) { filePathCallback?.onReceiveValue(null); return true }
                 fileCallback?.onReceiveValue(null)
                 fileCallback = filePathCallback
 
@@ -2841,6 +2869,7 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
             if (raw.length > 12 * 1024 * 1024 + 1024) return@addWebMessageListener
             runCatching {
                 val data = JSONObject(raw)
+                if (d218Preview && data.optString("action") !in setOf("ready", "diagCloudV350", "visualReadyV360")) return@runCatching
                 when (data.optString("action")) {
                     "ready" -> { v350Mark("WEB_READY_RECEIVED"); revealApp() }
                     "diagCloudV350" -> {
@@ -2895,6 +2924,7 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
                 }
             }
         }
+        if (d218Preview) return // No native Maps bridge in auth-only preview.
         // V224.1 — dedicated bridge; old APKs will not expose this name.
         // addWebMessageListener injects it only into frames matching trustedFrameOrigins.
         WebViewCompat.addWebMessageListener(webView, "MashwarakMapsV2241", trustedFrameOrigins) {
