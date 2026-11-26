@@ -2932,7 +2932,7 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
             runCatching {
                 val data = JSONObject(raw)
                 if (d218Preview && (!isMainFrame || origin.toString().trimEnd('/') != "https://mashwarak-d214-preview.pages.dev" ||
-                    data.optString("action") !in setOf("ready", "diagCloudV350", "visualReadyV360", "location"))) return@runCatching
+                    data.optString("action") !in setOf("ready", "diagCloudV350", "visualReadyV360", "location", "getFcmToken"))) return@runCatching
                 when (data.optString("action")) {
                     "ready" -> { v350Mark("WEB_READY_RECEIVED"); revealApp() }
                     "diagCloudV350" -> {
@@ -2960,7 +2960,9 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
                         }
                     }
                     "getFcmToken" -> {
-                        if (!BuildConfig.IS_DIAGNOSTIC && FirebaseApp.getApps(this).isNotEmpty()) {
+                        if ((!BuildConfig.IS_DIAGNOSTIC || (d218Preview && isMainFrame &&
+                            origin.toString().trimEnd('/') == "https://mashwarak-d214-preview.pages.dev" &&
+                            packageName == "com.jekonix.mashwarak.v351")) && FirebaseApp.getApps(this).isNotEmpty()) {
                             FirebaseMessaging.getInstance().token.addOnSuccessListener { fcm ->
                                 if (!isDestroyed && fcm.isNotBlank()) {
                                     val result = JSONObject().put("action", "fcmTokenV246").put("token", fcm).toString()
