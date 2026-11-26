@@ -2960,6 +2960,53 @@ No session tokens, customer identifiers or URLs are recorded.""".trimIndent()
                         }
                     }
                     "getFcmToken" -> {
+                        if (d218Preview) {
+                            // D281: protected main-frame only (the bridge gate above also checks origin).
+                            if (!isMainFrame || origin.toString().trimEnd('/') != "https://mashwarak-d214-preview.pages.dev" ||
+                                packageName != "com.jekonix.mashwarak.v351") return@runCatching
+                            val requestId = data.optString("requestId")
+                            if (requestId.matches(Regex("[a-z0-9]{16,64}"))) {
+                                fun deliver(kind: String, token: String? = null, code: String? = null) {
+                                    if (isDestroyed || isFinishing || !::webView.isInitialized) return
+                                    val uri = Uri.parse(webView.url.orEmpty())
+                                    if (uri.scheme != "https" || uri.host != "mashwarak-d214-preview.pages.dev" ||
+                                        uri.userInfo != null || (uri.port != -1 && uri.port != 443)) return
+                                    val payload = JSONObject().put("action", kind).put("requestId", requestId)
+                                    if (token != null) payload.put("token", token)
+                                    if (code != null) payload.put("code", code)
+                                    // No token in logs. Direct callback checks current document and request ID.
+                                    val js = """(function(){if(window!==window.top||location.origin!=='https://mashwarak-d214-preview.pages.dev')return false;return typeof window.mw281NativeFcmReply==='function'&&window.mw281NativeFcmReply($payload)===true;})()"""
+                                    runCatching {
+                                        webView.evaluateJavascript(js) { result ->
+                                            if (result != "true" && !isDestroyed && !isFinishing) {
+                                                runCatching { replyProxy.postMessage(payload.toString()) }
+                                            }
+                                        }
+                                    }.onFailure { runCatching { replyProxy.postMessage(payload.toString()) } }
+                                }
+                                v350Mark("D281_FCM_REQUEST_RECEIVED")
+                                deliver("fcmAckD281")
+                                if (FirebaseApp.getApps(this).isEmpty()) {
+                                    deliver("fcmErrorD281", code = "FIREBASE_UNAVAILABLE")
+                                } else {
+                                    runCatching {
+                                        FirebaseMessaging.getInstance().token.addOnSuccessListener { fcm ->
+                                            if (fcm.isBlank()) deliver("fcmErrorD281", code = "TOKEN_EMPTY")
+                                            else {
+                                                v350Mark("D281_FCM_TOKEN_READY")
+                                                deliver("fcmTokenV246", token = fcm)
+                                            }
+                                        }.addOnFailureListener {
+                                            v350Mark("D281_FCM_PROVIDER_FAILED")
+                                            deliver("fcmErrorD281", code = "FIREBASE_REQUEST_FAILED")
+                                        }.addOnCanceledListener {
+                                            deliver("fcmErrorD281", code = "FIREBASE_REQUEST_CANCELLED")
+                                        }
+                                    }.onFailure { deliver("fcmErrorD281", code = "FIREBASE_REQUEST_FAILED") }
+                                }
+                                return@runCatching
+                            }
+                        }
                         if ((!BuildConfig.IS_DIAGNOSTIC || (d218Preview && isMainFrame &&
                             origin.toString().trimEnd('/') == "https://mashwarak-d214-preview.pages.dev" &&
                             packageName == "com.jekonix.mashwarak.v351")) && FirebaseApp.getApps(this).isNotEmpty()) {
