@@ -93,8 +93,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var progress: ProgressBar
     private lateinit var splash: FrameLayout
     private lateinit var root: FrameLayout
-    private lateinit var helpButton: ImageView
-    private lateinit var helpTouchTarget: FrameLayout
 
     // V229 — native offline/error layer. The live WebView remains intact underneath,
     // so a transient connection loss does not erase an unfinished booking form.
@@ -137,6 +135,13 @@ class MainActivity : AppCompatActivity() {
     private var pendingCaptainLocationRequestId: String = ""
     private val lifecycleHandler = Handler(Looper.getMainLooper())
     private val trustedFrameOrigins by lazy { BuildConfig.WEB_APP_ORIGINS.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet() }
+    private val cloudOrigin = "https://mashwarak-d214-preview.pages.dev"
+    private var cloudAccessVisible = false
+    private var cloudPickerRequestId = ""
+    private fun isCloudAccess(uri: Uri): Boolean = uri.scheme == "https" &&
+        uri.userInfo == null && (uri.port == -1 || uri.port == 443) &&
+        uri.host == "mashwarak-d214-preview-pages.cloudflareaccess.com" &&
+        uri.path.orEmpty().startsWith("/cdn-cgi/access/")
     private var openNotificationsAfterLoad = false
     private var openCaptainOffersAfterLoadV246 = false
     private var nativeBackRequestInFlight = false
@@ -194,13 +199,16 @@ class MainActivity : AppCompatActivity() {
     private val nativeLocationPicker = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode != RESULT_OK) return@registerForActivityResult
+        val requestId = cloudPickerRequestId
+        cloudPickerRequestId = ""
+        if (result.resultCode != RESULT_OK || !requestId.matches(Regex("[a-f0-9]{32}"))) return@registerForActivityResult
         val data = result.data ?: return@registerForActivityResult
         val mode = data.getStringExtra(LocationPickerActivity.EXTRA_MODE).orEmpty().uppercase().let { if (it == "FROM") "FROM" else "TO" }
         val lat = data.getDoubleExtra(LocationPickerActivity.EXTRA_LAT, Double.NaN)
         val lng = data.getDoubleExtra(LocationPickerActivity.EXTRA_LNG, Double.NaN)
         if (!NativePolicy.validCoordinates(lat, lng)) return@registerForActivityResult
         broadcastNativePickerResult(
+            requestId = requestId,
             mode = mode,
             lat = lat,
             lng = lng,
@@ -320,49 +328,6 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        // Approved 18 Nov M monogram: preserve the existing badge dimensions,
-        // tap target, margins and device-language positioning exactly.
-        helpButton = ImageView(this).apply {
-            setImageResource(R.drawable.mashwarak_monogram)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            setPadding(0, 0, 0, 0)
-            background = null
-            isClickable = false
-            isFocusable = false
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
-        helpTouchTarget = FrameLayout(this).apply {
-            background = roundedBackground(
-                color = brandBackground,
-                radiusDp = 20f
-            )
-            isClickable = true
-            isFocusable = true
-            contentDescription = "مساعدة مشوارك"
-            elevation = dp(15).toFloat()
-            setOnClickListener { showHelpCenter() }
-        }
-        helpTouchTarget.addView(
-            helpButton,
-            FrameLayout.LayoutParams(dp(54), dp(65)).apply {
-                gravity = Gravity.CENTER
-            }
-        )
-        root.addView(
-            helpTouchTarget,
-            FrameLayout.LayoutParams(dp(56), dp(66)).apply {
-                // Keep the approved gold M monogram. The side is set
-                // from the device language after the view has been attached.
-                gravity = Gravity.BOTTOM or Gravity.LEFT
-                leftMargin = dp(10)
-                bottomMargin = dp(6)
-            }
-        )
-        syncHelpBadgeWithDeviceLanguage()
-        // No oversized white Google Sites cover: it previously erased the
-        // left side of the burgundy booking CTA. The badge now covers only its
-        // own visible area. No other map/booking elements are modified.
-
         splash = buildSplash()
         root.addView(
             splash,
@@ -387,7 +352,6 @@ class MainActivity : AppCompatActivity() {
             IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
             ContextCompat.RECEIVER_EXPORTED
         )
-        applyStoredUpdateIndicator()
 
         // Apply safe area for status bar and navigation bar.
         // The WebView, refresh button, and splash all start below the phone's
@@ -421,6 +385,13 @@ class MainActivity : AppCompatActivity() {
 
 
         webView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                if (cloudAccessVisible && Uri.parse(url.orEmpty()).host == "mashwarak-d214-preview.pages.dev") {
+                    cloudAccessVisible = false
+                    showSplash()
+                }
+                super.onPageStarted(view, url, favicon)
+            }
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: WebResourceRequest?
@@ -483,6 +454,8 @@ class MainActivity : AppCompatActivity() {
                     return true
                 }
 
+                // Access login is navigation only; it never receives the privileged bridge.
+                if (request.isForMainFrame && isCloudAccess(uri)) return false
                 if (!isTrustedNavigation(uri)) {
                     if (request.isForMainFrame && scheme == "https") {
                         runCatching { startActivity(Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE)) }
@@ -534,6 +507,14 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 progress.visibility = View.GONE
+                if (!webLoadFailed && isCloudAccess(Uri.parse(url.orEmpty()))) {
+                    cloudAccessVisible = true
+                    lifecycleHandler.removeCallbacksAndMessages(null)
+                    splash.animate().cancel()
+                    splash.visibility = View.GONE
+                    stopSplashShimmer()
+                    return
+                }
                 if (webLoadFailed || !isInternetAvailable()) {
                     if (!isInternetAvailable()) showNativeOfflineScreen(true)
                     return
@@ -825,6 +806,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun broadcastNativePickerResult(
+        requestId: String,
         mode: String,
         lat: Double,
         lng: Double,
@@ -846,6 +828,7 @@ class MainActivity : AppCompatActivity() {
               try{
                 var message={
                   type:'mashwarak-native-picker-result',
+                  requestId:${JSONObject.quote(requestId)},
                   mode:$modeJson,
                   lat:$lat,
                   lng:$lng,
@@ -863,7 +846,7 @@ class MainActivity : AppCompatActivity() {
                   var n=0;try{n=w.length||0}catch(e){}
                   for(var i=0;i<n;i++){try{walk(w[i],d+1)}catch(e){}}
                 }
-                walk(window,0);
+                if(window===window.top&&location.origin==='$cloudOrigin')window.postMessage(message,'$cloudOrigin');
               }catch(e){}
             })();
         """.trimIndent()
@@ -1101,7 +1084,7 @@ class MainActivity : AppCompatActivity() {
                   var n=0;try{n=w.length||0}catch(e){}
                   for(var i=0;i<n;i++){try{walk(w[i],d+1)}catch(e){}}
                 }
-                walk(window,0);
+                if(window===window.top&&location.origin==='$cloudOrigin')window.postMessage(message,'$cloudOrigin');
               }catch(e){}
             })();
         """.trimIndent()
@@ -1141,7 +1124,7 @@ class MainActivity : AppCompatActivity() {
                   var n=0;try{n=w.length||0}catch(e){}
                   for(var i=0;i<n;i++){try{walk(w[i],d+1)}catch(e){}}
                 }
-                walk(window,0);
+                if(window===window.top&&location.origin==='$cloudOrigin')window.postMessage(message,'$cloudOrigin');
               }catch(e){}
             })();
         """.trimIndent()
@@ -1281,7 +1264,7 @@ class MainActivity : AppCompatActivity() {
                   var n=0;try{n=w.length||0}catch(e){}
                   for(var i=0;i<n;i++){try{walk(w[i],d+1)}catch(e){}}
                 }
-                walk(window,0);
+                if(window===window.top&&location.origin==='$cloudOrigin')window.postMessage(message,'$cloudOrigin');
                 return true;
               }catch(e){return false;}
             })();
@@ -1299,30 +1282,7 @@ class MainActivity : AppCompatActivity() {
         webView.postDelayed({ pendingSharedDestination = null }, 11000L)
     }
 
-    /** Match the native help badge to the device's RTL/LTR direction.
-     * Arabic and other RTL device languages: bottom-right.
-     * English and other LTR device languages: bottom-left.
-     * The icon size, shape, click handler and vertical offset remain unchanged.
-     */
-    private fun syncHelpBadgeWithDeviceLanguage() {
-        if (!::helpTouchTarget.isInitialized) return
-        val locale = resources.configuration.locales.get(0) // minSdk 24
-        val rightSide = android.text.TextUtils.getLayoutDirectionFromLocale(locale) ==
-            View.LAYOUT_DIRECTION_RTL
-        val params = helpTouchTarget.layoutParams as? FrameLayout.LayoutParams ?: return
-        val newGravity = Gravity.BOTTOM or (if (rightSide) Gravity.RIGHT else Gravity.LEFT)
-        val newLeftMargin = if (rightSide) 0 else dp(10)
-        val newRightMargin = if (rightSide) dp(10) else 0
-        if (params.gravity == newGravity && params.leftMargin == newLeftMargin &&
-            params.rightMargin == newRightMargin) return
-        params.gravity = newGravity
-        params.leftMargin = newLeftMargin
-        params.rightMargin = newRightMargin
-        params.bottomMargin = dp(6)
-        helpTouchTarget.layoutParams = params
-    }
-
-    /** Open the existing native support sheet; the badge follows device RTL/LTR. */
+    /** Existing help and update sheet, accessible from the trusted web drawer. */
     private fun showHelpCenter() {
         val dialog = android.app.Dialog(this)
         val sheet = LinearLayout(this).apply {
@@ -1649,7 +1609,6 @@ class MainActivity : AppCompatActivity() {
                 updatePrefs.edit()
                     .putString(PREF_AVAILABLE_VERSION, info.versionName)
                     .apply()
-                helpButton.contentDescription = "مساعدة مشوارك، تحديث متاح"
 
                 val notes = info.releaseNotes.trim().take(420)
                 status.text = buildString {
@@ -1665,7 +1624,6 @@ class MainActivity : AppCompatActivity() {
                 updatePrefs.edit()
                     .remove(PREF_AVAILABLE_VERSION)
                     .apply()
-                helpButton.contentDescription = "مساعدة مشوارك"
                 status.text = "✓ أنت تستخدم أحدث إصدار من مشوارك (${BuildConfig.VERSION_NAME})."
                 downloadButton.visibility = View.GONE
             }
@@ -1900,21 +1858,10 @@ class MainActivity : AppCompatActivity() {
                     updatePrefs.edit()
                         .putString(PREF_AVAILABLE_VERSION, info.versionName)
                         .apply()
-                    if (::helpButton.isInitialized) helpButton.contentDescription = "مساعدة مشوارك، تحديث متاح"
                 } else {
                     updatePrefs.edit().remove(PREF_AVAILABLE_VERSION).apply()
-                    if (::helpButton.isInitialized) helpButton.contentDescription = "مساعدة مشوارك"
                 }
             }
-        }
-    }
-
-    private fun applyStoredUpdateIndicator() {
-        if (!BuildConfig.DIRECT_UPDATES) return
-        val latest = updatePrefs.getString(PREF_AVAILABLE_VERSION, "").orEmpty()
-        if (::helpButton.isInitialized) {
-            helpButton.contentDescription = if (isVersionNewer(latest, BuildConfig.VERSION_NAME))
-                "مساعدة مشوارك، تحديث متاح" else "مساعدة مشوارك"
         }
     }
 
@@ -1953,9 +1900,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // The badge must follow the side Google Sites uses for the device's
-        // RTL/LTR language, including when returning from another app.
-        syncHelpBadgeWithDeviceLanguage()
         activityInForeground = true
         if (webRendererGone) {
             // A dead renderer must not be reused; existing V230 recovery handles it.
@@ -2535,12 +2479,7 @@ class MainActivity : AppCompatActivity() {
     private fun isTrustedNavigation(uri: Uri): Boolean {
         if (uri.scheme != "https" || uri.userInfo != null || (uri.port != -1 && uri.port != 443)) return false
         val origin = "https://${uri.host.orEmpty()}"
-        if (trustedFrameOrigins.contains(origin)) return true
-        if (uri.host == Uri.parse(BuildConfig.APP_URL).host) return true
-        val deployed = Uri.parse(BuildConfig.WEB_APP_EXEC_URL)
-        val deploymentPath = deployed.path.orEmpty().substringBeforeLast('/') + "/"
-        return deployed.scheme == "https" && deployed.host == "script.google.com" &&
-            uri.host == deployed.host && deploymentPath.length > 20 && uri.path.orEmpty().startsWith(deploymentPath)
+        return origin == cloudOrigin && trustedFrameOrigins.contains(origin)
     }
 
     private fun revealApp() {
@@ -2579,8 +2518,9 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "حدّث Android System WebView للاستفادة من الخريطة والكاميرا داخل التطبيق.", Toast.LENGTH_LONG).show()
             return
         }
-        WebViewCompat.addWebMessageListener(webView, "MashwarakNativeV201", trustedFrameOrigins) { _, message, origin, _, replyProxy ->
-            if (isDestroyed || !trustedFrameOrigins.contains(origin.toString().trimEnd('/'))) return@addWebMessageListener
+        WebViewCompat.addWebMessageListener(webView, "MashwarakNativeV201", trustedFrameOrigins) { _, message, origin, isMainFrame, replyProxy ->
+            if (isDestroyed || isFinishing || !isMainFrame || origin.toString().trimEnd('/') != cloudOrigin ||
+                !trustedFrameOrigins.contains(origin.toString().trimEnd('/'))) return@addWebMessageListener
             if (message.type != androidx.webkit.WebMessageCompat.TYPE_STRING) return@addWebMessageListener
             val raw = message.data ?: return@addWebMessageListener
             if (raw.length > 12 * 1024 * 1024 + 1024) return@addWebMessageListener
@@ -2589,15 +2529,29 @@ class MainActivity : AppCompatActivity() {
                 when (data.optString("action")) {
                     "ready" -> revealApp()
                     "getFcmToken" -> {
-                        if (FirebaseApp.getApps(this).isNotEmpty()) {
-                            FirebaseMessaging.getInstance().token.addOnSuccessListener { fcm ->
-                                if (!isDestroyed && fcm.isNotBlank()) {
-                                    val result = JSONObject().put("action", "fcmTokenV246").put("token", fcm).toString()
-                                    runCatching {
-                                        replyProxy.postMessage(result)
-                                    }
+                        val requestId = data.optString("requestId")
+                        if (!requestId.matches(Regex("[a-f0-9]{32}"))) return@runCatching
+                        fun reply(action: String, token: String? = null, code: String? = null) {
+                            if (isDestroyed || isFinishing) return
+                            val result = JSONObject().put("action", action).put("requestId", requestId)
+                            if (token != null) result.put("token", token)
+                            if (code != null) result.put("code", code)
+                            runCatching { replyProxy.postMessage(result.toString()) }
+                        }
+                        reply("fcmAckD281")
+                        if (FirebaseApp.getApps(this).isEmpty()) {
+                            reply("fcmErrorD281", code = "FIREBASE_UNAVAILABLE")
+                        } else {
+                            runCatching {
+                                FirebaseMessaging.getInstance().token.addOnSuccessListener { fcm ->
+                                    if (fcm.isNotBlank()) reply("fcmTokenV246", token = fcm)
+                                    else reply("fcmErrorD281", code = "TOKEN_EMPTY")
+                                }.addOnFailureListener {
+                                    reply("fcmErrorD281", code = "FIREBASE_REQUEST_FAILED")
+                                }.addOnCanceledListener {
+                                    reply("fcmErrorD281", code = "FIREBASE_REQUEST_CANCELLED")
                                 }
-                            }
+                            }.onFailure { reply("fcmErrorD281", code = "FIREBASE_REQUEST_FAILED") }
                         }
                     }
                     "camera" -> MashwarakCameraBridge().setCaptureMode(data.optString("mode"))
@@ -2611,16 +2565,31 @@ class MainActivity : AppCompatActivity() {
                             .put("action", "captainLocationCapabilityV1")
                             .put("supported", true).toString())
                     }
-                    "picker" -> MashwarakLocationBridge().openNativePicker(data.optString("mode"), data.optString("lat"), data.optString("lng"), data.optString("label").take(300))
+                    "picker" -> {
+                        val id = data.optString("requestId")
+                        if (!id.matches(Regex("[a-f0-9]{32}"))) return@runCatching
+                        cloudPickerRequestId = id
+                        MashwarakLocationBridge().openNativePicker(data.optString("mode"), data.optString("lat"), data.optString("lng"), data.optString("label").take(300))
+                    }
                     "saveImage" -> MashwarakDownloadBridge().saveBase64Image(data.optString("name"), data.optString("data"))
                 }
             }
         }
+        // D282b: replaces the floating M with the existing help sheet in the web drawer.
+        // No token or user data is exchanged. Access is limited to the trusted top frame.
+        WebViewCompat.addWebMessageListener(webView, "MashwarakHelpD282b", trustedFrameOrigins) { _, message, origin, isMainFrame, _ ->
+            if (isDestroyed || isFinishing || !activityInForeground || !isMainFrame ||
+                origin.toString().trimEnd('/') != cloudOrigin ||
+                !trustedFrameOrigins.contains(origin.toString().trimEnd('/'))) return@addWebMessageListener
+            if (message.type != androidx.webkit.WebMessageCompat.TYPE_STRING || message.data != "open") return@addWebMessageListener
+            showHelpCenter()
+        }
         // V224.1 — dedicated bridge; old APKs will not expose this name.
         // addWebMessageListener injects it only into frames matching trustedFrameOrigins.
         WebViewCompat.addWebMessageListener(webView, "MashwarakMapsV2241", trustedFrameOrigins) {
-                _, message, origin, _, _ ->
-            if (isDestroyed || isFinishing || !trustedFrameOrigins.contains(origin.toString().trimEnd('/'))) {
+                _, message, origin, isMainFrame, _ ->
+            if (isDestroyed || isFinishing || !isMainFrame || origin.toString().trimEnd('/') != cloudOrigin ||
+                !trustedFrameOrigins.contains(origin.toString().trimEnd('/'))) {
                 return@addWebMessageListener
             }
             if (message.type != androidx.webkit.WebMessageCompat.TYPE_STRING) return@addWebMessageListener
