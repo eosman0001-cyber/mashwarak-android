@@ -1,0 +1,118 @@
+name: Build Original Mashwarak (signed, protected)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: mashwarak-original-protected-build
+  cancel-in-progress: false
+jobs:
+  signed-original:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Verify original baseline and resolve higher version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TOOLS="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          test -x "$TOOLS/apksigner" && test -x "$TOOLS/aapt"
+          echo "MW_TOOLS=$TOOLS" >> "$GITHUB_ENV"
+          TAG=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          mkdir -p "$RUNNER_TEMP/mw-baseline"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'Mashwarak.apk' --dir "$RUNNER_TEMP/mw-baseline"
+          OLD="$RUNNER_TEMP/mw-baseline/Mashwarak.apk"
+          "$TOOLS/apksigner" verify --print-certs "$OLD" > "$RUNNER_TEMP/mw-old-cert.txt"
+          CERT=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/mw-old-cert.txt")
+          [[ "$CERT" =~ ^[0-9a-fA-F]{64}$ ]]
+          test "$(grep -c 'certificate SHA-256 digest:' "$RUNNER_TEMP/mw-old-cert.txt")" = 1
+          BADGING=$("$TOOLS/aapt" dump badging "$OLD")
+          grep -q "package: name='com.jekonix.mashwarak'" <<< "$BADGING"
+          OLD_CODE=$(sed -n "s/^package: .*versionCode='\([0-9]*\)'.*/\1/p" <<< "$BADGING")
+          [[ "$OLD_CODE" =~ ^[0-9]+$ ]]
+          CODE=$((10#$OLD_CODE+1))
+          (( CODE > 0 && CODE <= 2100000000 ))
+          VERSION="$((CODE/1000000)).$((CODE/1000%1000)).$((CODE%1000))"
+          echo "MASHWARAK_VERSION_CODE=$CODE" >> "$GITHUB_ENV"
+          echo "MASHWARAK_VERSION_NAME=$VERSION" >> "$GITHUB_ENV"
+          echo "MW_BASELINE_CERT=$CERT" >> "$GITHUB_ENV"
+          echo "MW_BASELINE_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "Original released APK signature verified; new versionCode $CODE."
+      - name: Restore original release signing key
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.MASHWARAK_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_BASE64"
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/mashwarak-release-key.jks"
+          echo "b909765d511efd2d01b73376f279863f3ed42ec0a3bbed127867773410e9a581  $RUNNER_TEMP/mashwarak-release-key.jks" | sha256sum -c -
+      - name: Check original app config and required secrets
+        shell: bash
+        env:
+          MAPS_KEY: ${{ secrets.MASHWARAK_MAPS_API_KEY }}
+          KS_PASS: ${{ secrets.MASHWARAK_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.MASHWARAK_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.MASHWARAK_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ "$MAPS_KEY" == AIza* && -n "$KS_PASS" && -n "$KEY_ALIAS" && -n "$KEY_PASS" ]]
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          cfg=dict(line.split('=',1) for line in Path('mashwarak-config.properties').read_text().splitlines() if '=' in line and not line.startswith('#'))
+          j=json.loads(Path('app/google-services.json').read_text())
+          assert cfg['APP_URL']=='https://mashwarak-d214-preview.pages.dev/'
+          assert cfg['WEB_APP_ORIGINS']=='https://mashwarak-d214-preview.pages.dev'
+          assert j['project_info']['project_id']==cfg['FCM_PROJECT_ID']=='mashwarak-896b4'
+          assert any(c['client_info']['android_client_info']['package_name']=='com.jekonix.mashwarak' and c['client_info']['mobilesdk_app_id']==cfg['FCM_APP_ID'] for c in j['client'])
+          print('Original Firebase package and protected origin verified.')
+          PY
+      - name: Build and lint signed original package
+        env:
+          MASHWARAK_KEYSTORE_PATH: ${{ runner.temp }}/mashwarak-release-key.jks
+          MASHWARAK_KEYSTORE_PASSWORD: ${{ secrets.MASHWARAK_KEYSTORE_PASSWORD }}
+          MASHWARAK_KEY_ALIAS: ${{ secrets.MASHWARAK_KEY_ALIAS }}
+          MASHWARAK_KEY_PASSWORD: ${{ secrets.MASHWARAK_KEY_PASSWORD }}
+          MASHWARAK_MAPS_API_KEY: ${{ secrets.MASHWARAK_MAPS_API_KEY }}
+        run: gradle :app:assembleDirectRelease :app:lintDirectRelease
+      - name: Block incompatible APKs before upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/direct/release/app-direct-release.apk
+          "$MW_TOOLS/apksigner" verify --print-certs "$APK" > "$RUNNER_TEMP/mw-new-cert.txt"
+          CERT=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/mw-new-cert.txt")
+          test "$CERT" = "$MW_BASELINE_CERT"
+          test "$(grep -c 'certificate SHA-256 digest:' "$RUNNER_TEMP/mw-new-cert.txt")" = 1
+          BADGING=$("$MW_TOOLS/aapt" dump badging "$APK")
+          grep -q "package: name='com.jekonix.mashwarak'" <<< "$BADGING"
+          grep -q "versionCode='$MASHWARAK_VERSION_CODE'" <<< "$BADGING"
+          grep -q "versionName='$MASHWARAK_VERSION_NAME'" <<< "$BADGING"
+          grep -q "targetSdkVersion:'36'" <<< "$BADGING"
+          unzip -p "$APK" AndroidManifest.xml | strings -el > "$RUNNER_TEMP/mw-manifest-strings.txt"
+          if grep -q 'MISSING_MAPS_API_KEY' "$RUNNER_TEMP/mw-manifest-strings.txt"; then exit 1; fi
+          mkdir -p output
+          cp "$APK" output/Mashwarak.apk
+          printf 'package=com.jekonix.mashwarak\nversionCode=%s\nversionName=%s\npreviousRelease=%s\nsignerSHA256=%s\nsourceCommit=%s\n' "$MASHWARAK_VERSION_CODE" "$MASHWARAK_VERSION_NAME" "$MW_BASELINE_TAG" "$CERT" "$GITHUB_SHA" > output/verification.txt
+          (cd output && sha256sum Mashwarak.apk >> verification.txt)
+          echo 'Original release signer, package, version and lint gate passed.'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Mashwarak-Original-Signed-APK
+          path: output/
+          if-no-files-found: error
+      - name: Remove signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/mashwarak-release-key.jks"
